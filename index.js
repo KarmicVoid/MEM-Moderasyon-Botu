@@ -83,5 +83,10 @@ client.on('messageCreate', async (message) => {
         try {
             await message.channel.bulkDelete(amount + 1, true);
             message
+                }
+});
+
+client.login(process.env.TOKEN);
+
 
 
