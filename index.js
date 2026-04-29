@@ -1,5 +1,4 @@
-const express = require('express');
-const app = express();
+express();
 const port = 3000;
 
 app.get('/', (req, res) => res.send('Bot aktif!'));
@@ -84,52 +83,4 @@ client.on('messageCreate', async (message) => {
         try {
             await message.channel.bulkDelete(amount + 1, true);
             message.channel.send(`${amount} adet mesaj başarıyla silindi.`);
-        } catch {
-            message.channel.send("❌ Mesajlar silinemedi.");
-        }
-    }
-
-    if (command === 'lock') {
-        if (!isAuthorized(message.member)) return message.reply("❌ Yetkin yok.");
-        try {
-            await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
-            message.channel.send(`${message.channel.name} adlı kanal başarıyla kilitlendi.`);
-        } catch {
-            message.channel.send("❌ Kanal kilitlenemedi.");
-        }
-    }
-
-    if (command === 'afk') {
-        const reason = args.join(' ') || "Sebep yok";
-        afkUsers.set(message.author.id, reason);
-        message.reply("✅ Artık AFK'sın.");
-    }
-
-    if (command === 'duyuru') {
-        if (!isAuthorized(message.member)) return message.reply("❌ Yetkin yok.");
-        const channel = message.mentions.channels.first();
-        const msg = args.slice(1).join(' ');
-        if (!channel || !msg) return message.reply("Hatalı kullanım.");
-        try {
-            await channel.send(`📢 ${msg}`);
-            message.reply("✅ Duyuru atıldı.");
-        } catch {
-            message.reply("❌ Duyuru atılamadı.");
-        }
-    }
-});
-
-client.on('messageCreate', (message) => {
-    if (afkUsers.has(message.author.id)) {
-        afkUsers.delete(message.author.id);
-        message.reply("✅ AFK durumundan çıktın.");
-    }
-    message.mentions.users.forEach(user => {
-        if (afkUsers.has(user.id)) {
-            message.channel.send(`${user.username} adlı kişi ${afkUsers.get(user.id)} dolayından dolayı afk.`);
-        }
-    });
-});
-
-client.login(process.env.TOKEN);
-
+        } catch            message.chann    if            await message.channel.permissionOverwrites.edit(message.guild.roles.every            message.channel.send(`${message.chann            message.chan        if (!isAuthorized(message.me        const msg = args.slice(1).joi            message.repl            message.rep    if (afkUsers.has(message.author    message.mentions.users.forEach(user 
