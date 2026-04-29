@@ -1,4 +1,10 @@
 {
+  "dependencies": {
+    "discord.js": "^14.x.x",
+    "express": "^4.18.2"
+  }
+}
+{
   "name": "mem-bot",
   "version": "1.0.0",
   "main": "index.js",
