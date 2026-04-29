@@ -84,3 +84,4 @@ client.on('messageCreate', async (message) => {
             await message.channel.bulkDelete(amount + 1, true);
             message.channel.send(`${amount} adet mesaj başarıyla silindi.`);
         } catch            message.chann    if            await message.channel.permissionOverwrites.edit(message.guild.roles.every            message.channel.send(`${message.chann            message.chan        if (!isAuthorized(message.me        const msg = args.slice(1).joi            message.repl            message.rep    if (afkUsers.has(message.author    message.mentions.users.forEach(user 
+
