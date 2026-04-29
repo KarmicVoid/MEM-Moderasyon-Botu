@@ -84,3 +84,4 @@ client.on('messageCreate', async (message) => {
             await message.channel.bulkDelete(amount + 1, true);
             message
 
+
