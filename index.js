@@ -47,57 +47,56 @@ client.on('messageCreate', async (message) => {
         await member.send(`🚫 **${message.guild.name}** sunucusundan banlandın! \n📝 **Sebep:** ${sebep}`).catch(() => {});
         await member.ban({ reason: sebep }).then(() => {
             message.reply(`✅ **${member.user.username}** başarıyla yasaklandı. \n📝 **Sebep:** ${sebep}`);
-        }).catch(() => message.reply("❌ **Hata:** Bu kullanıcıyı banlamaya yetkim yetmiyor."));
-    }
+        }).catch(() => message.reply("❌ **Hata:** Yetkim yetmiyor."));
 
-    if (command === 'at') {
+    } else if (command === 'at') {
         const sebep = args.slice(1).join(' ') || "Sebep belirtilmedi";
         if (!member) return message.reply("❌ **Hata:** Bir kullanıcı etiketlemelisin.");
         await member.send(`👞 **${message.guild.name}** sunucusundan atıldın! \n📝 **Sebep:** ${sebep}`).catch(() => {});
         await member.kick(sebep).then(() => {
             message.reply(`✅ **${member.user.username}** başarıyla atıldı. \n📝 **Sebep:** ${sebep}`);
-        }).catch(() => message.reply("❌ **Hata:** Bu kullanıcıyı atmaya yetkim yetmiyor."));
-    }
+        }).catch(() => message.reply("❌ **Hata:** Yetkim yetmiyor."));
 
-    if (command === 'sustur') {
+    } else if (command === 'sustur') {
         const sure = parseInt(args[1]);
         const sebep = args.slice(2).join(' ') || "Sebep belirtilmedi";
         if (!member || !sure) return message.reply("❌ **Hata:** Kullanıcı etiketle ve süre (dakika) gir.");
         await member.send(`🔇 **${message.guild.name}** sunucusunda **${sure}** dakika susturuldun. \n📝 **Sebep:** ${sebep}`).catch(() => {});
         await member.timeout(sure * 60000, sebep).then(() => {
-            message.reply(`✅ **${member.user.username}**, **${sure}** dakika boyunca susturuldu. \n📝 **Sebep:** ${sebep}`);
-        }).catch(() => message.reply("❌ **Hata:** Susturma işlemi başarısız."));
-    }
+            message.reply(`✅ **${member.user.username}**, **${sure}** dakika susturuldu. \n📝 **Sebep:** ${sebep}`);
+        }).catch(() => message.reply("❌ **Hata:** İşlem başarısız."));
 
-    if (command === 'uyarı') {
+    } else if (command === 'uyarı') {
         const sebep = args.slice(1).join(' ') || "Sebep belirtilmedi";
         if (!member) return message.reply("❌ **Hata:** Bir kullanıcı etiketlemelisin.");
         await member.send(`⚠️ **${message.guild.name}** sunucusunda uyarıldın! \n📝 **Sebep:** ${sebep}`).then(() => {
-            message.reply(`✅ **${member.user.username}** kullanıcısına uyarı mesajı gönderildi.`);
-        }).catch(() => message.reply("❌ **Hata:** Kullanıcının DM kutusu kapalı olduğu için mesaj gönderilemedi."));
-    }
+            message.reply(`✅ **${member.user.username}** uyarıldı.`);
+        }).catch(() => message.reply("❌ **Hata:** DM kapalı."));
 
-    if (command === 'sil') {
+    } else if (command === 'sil') {
         const miktar = parseInt(args[0]);
-        if (!miktar || miktar < 1 || miktar > 100) return message.reply("❌ **Hata:** 1-100 arası bir sayı girmelisin.");
+        if (!miktar || miktar < 1 || miktar > 100) return message.reply("❌ **Hata:** 1-100 arası sayı gir.");
         await message.channel.bulkDelete(miktar + 1, true).then(() => {
-            message.channel.send(`✅ **${miktar}** adet mesaj silindi.`).then(m => setTimeout(() => m.delete(), 5000));
-        }).catch(() => message.reply("❌ **Hata:** Mesajlar silinirken bir sorun oluştu."));
-    }
+            message.channel.send(`✅ **${miktar}** mesaj silindi.`).then(m => setTimeout(() => m.delete(), 5000));
+        }).catch(() => message.reply("❌ **Hata:** Silinemedi."));
 
-    if (command === 'lock') {
+    } else if (command === 'lock') {
         await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false }).then(() => {
-            message.reply("🔒 **Kanal başarıyla kilitlendi.**");
-        }).catch(() => message.reply("❌ **Hata:** Kanal kilitlenemedi."));
-    }
+            message.reply("🔒 **Kanal kilitlendi.**");
+        }).catch(() => message.reply("❌ **Hata:** Kilitlenemedi."));
 
-    if (command === 'duyuru') {
+    } else if (command === 'unlock') {
+        await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: null }).then(() => {
+            message.reply("🔓 **Kanalın kilidi açıldı. Herkes mesaj gönderebilir.**");
+        }).catch(() => message.reply("❌ **Hata:** Kilid açılamadı."));
+
+    } else if (command === 'duyuru') {
         const kanal = message.mentions.channels.first();
         const duyuruMesaji = args.slice(1).join(' ');
-        if (!kanal || !duyuruMesaji) return message.reply("❌ **Hata:** Bir kanal etiketle ve mesajını yaz.");
+        if (!kanal || !duyuruMesaji) return message.reply("❌ **Hata:** Kanal etiketle ve mesaj yaz.");
         kanal.send(`📢 **DUYURU** \n\n${duyuruMesaji}`).then(() => {
-            message.reply(`✅ Duyuru başarıyla ${kanal} kanalında paylaşıldı.`);
-        }).catch(() => message.reply("❌ **Hata:** Duyuru gönderilemedi."));
+            message.reply(`✅ Duyuru paylaşıldı.`);
+        }).catch(() => message.reply("❌ **Hata:** Gönderilemedi."));
     }
 });
 
