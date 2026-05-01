@@ -42,27 +42,30 @@ client.on('messageCreate', async (message) => {
     if (!isAuthorized(message.member)) return;
 
     if (command === 'ban') {
+        const sebep = args.slice(1).join(' ') || "Sebep belirtilmedi";
         if (!member) return message.reply("❌ **Hata:** Bir kullanıcı etiketlemelisin.");
-        await member.send(`🚫 **${message.guild.name}** sunucusundan banlandın!`).catch(() => {});
-        await member.ban().then(() => {
-            message.reply(`✅ **${member.user.username}** başarıyla sunucudan yasaklandı.`);
+        await member.send(`🚫 **${message.guild.name}** sunucusundan banlandın! \n📝 **Sebep:** ${sebep}`).catch(() => {});
+        await member.ban({ reason: sebep }).then(() => {
+            message.reply(`✅ **${member.user.username}** başarıyla yasaklandı. \n📝 **Sebep:** ${sebep}`);
         }).catch(() => message.reply("❌ **Hata:** Bu kullanıcıyı banlamaya yetkim yetmiyor."));
     }
 
     if (command === 'at') {
+        const sebep = args.slice(1).join(' ') || "Sebep belirtilmedi";
         if (!member) return message.reply("❌ **Hata:** Bir kullanıcı etiketlemelisin.");
-        await member.send(`👞 **${message.guild.name}** sunucusundan atıldın!`).catch(() => {});
-        await member.kick().then(() => {
-            message.reply(`✅ **${member.user.username}** başarıyla sunucudan atıldı.`);
+        await member.send(`👞 **${message.guild.name}** sunucusundan atıldın! \n📝 **Sebep:** ${sebep}`).catch(() => {});
+        await member.kick(sebep).then(() => {
+            message.reply(`✅ **${member.user.username}** başarıyla atıldı. \n📝 **Sebep:** ${sebep}`);
         }).catch(() => message.reply("❌ **Hata:** Bu kullanıcıyı atmaya yetkim yetmiyor."));
     }
 
     if (command === 'sustur') {
         const sure = parseInt(args[1]);
+        const sebep = args.slice(2).join(' ') || "Sebep belirtilmedi";
         if (!member || !sure) return message.reply("❌ **Hata:** Kullanıcı etiketle ve süre (dakika) gir.");
-        await member.send(`🔇 **${message.guild.name}** sunucusunda **${sure}** dakika susturuldun.`).catch(() => {});
-        await member.timeout(sure * 60000).then(() => {
-            message.reply(`✅ **${member.user.username}**, **${sure}** dakika boyunca susturuldu.`);
+        await member.send(`🔇 **${message.guild.name}** sunucusunda **${sure}** dakika susturuldun. \n📝 **Sebep:** ${sebep}`).catch(() => {});
+        await member.timeout(sure * 60000, sebep).then(() => {
+            message.reply(`✅ **${member.user.username}**, **${sure}** dakika boyunca susturuldu. \n📝 **Sebep:** ${sebep}`);
         }).catch(() => message.reply("❌ **Hata:** Susturma işlemi başarısız."));
     }
 
@@ -78,7 +81,7 @@ client.on('messageCreate', async (message) => {
         const miktar = parseInt(args[0]);
         if (!miktar || miktar < 1 || miktar > 100) return message.reply("❌ **Hata:** 1-100 arası bir sayı girmelisin.");
         await message.channel.bulkDelete(miktar + 1, true).then(() => {
-            message.channel.send(`✅ **${miktar}** adet mesaj başarıyla silindi.`).then(m => setTimeout(() => m.delete(), 5000));
+            message.channel.send(`✅ **${miktar}** adet mesaj silindi.`).then(m => setTimeout(() => m.delete(), 5000));
         }).catch(() => message.reply("❌ **Hata:** Mesajlar silinirken bir sorun oluştu."));
     }
 
