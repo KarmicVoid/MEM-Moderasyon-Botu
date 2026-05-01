@@ -17,7 +17,7 @@ const client = new Client({
     ]
 });
 
-// Ayarlar dosyası kontrolü
+// .
 let sunucuVerisi = {};
 const dosyaYolu = './ayarlar.json';
 if (fs.existsSync(dosyaYolu)) {
