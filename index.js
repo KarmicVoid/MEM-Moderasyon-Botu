@@ -1,102 +1,138 @@
+const { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
+const fs = require('fs');
 const express = require('express');
+
+// --- RENDER PORT HATASI ÇÖZÜMÜ ---
 const app = express();
-app.get('/', (req, res) => res.send('Bot aktif!'));
-app.listen(3000);
+const port = process.env.PORT || 3000;
+app.get('/', (req, res) => res.send('MEM Moderasyon Botu Aktif!'));
+app.listen(port, () => console.log(`Port ${port} dinleniyor.`));
 
-const { Client, GatewayIntentBits, PermissionsBitField } = require('discord.js');
-const client = new Client({ intents: [131071] });
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers
+    ]
+});
 
-const authorizedRoles = ['1483795032547917972', '1483795032589992075'];
-const afkUsers = new Map();
-
-function isAuthorized(member) {
-    if (member.permissions.has(PermissionsBitField.Flags.Administrator)) return true;
-    return member.roles.cache.some(role => authorizedRoles.includes(role.id));
+// Ayarlar dosyası kontrolü
+let sunucuVerisi = {};
+const dosyaYolu = './ayarlar.json';
+if (fs.existsSync(dosyaYolu)) {
+    sunucuVerisi = JSON.parse(fs.readFileSync(dosyaYolu, 'utf8'));
 }
 
+function veriKaydet() {
+    fs.writeFileSync(dosyaYolu, JSON.stringify(sunucuVerisi, null, 2));
+}
+
+let afkKullanicilar = new Map();
+
 client.on('messageCreate', async (message) => {
-    if (message.author.bot) return;
+    if (!message.guild || message.author.bot) return;
 
-    if (afkUsers.has(message.author.id)) {
-        afkUsers.delete(message.author.id);
-        message.reply("✅ **AFK modundan çıktın. Tekrar hoş geldin!**").then(m => setTimeout(() => m.delete(), 5000));
+    // AFK Sistemi
+    if (afkKullanicilar.has(message.author.id)) {
+        afkKullanicilar.delete(message.author.id);
+        message.reply(`Hoş geldin! Başarıyla AFK modundan çıktın. 👋`).then(m => setTimeout(() => m.delete().catch(() => {}), 5000));
     }
 
-    message.mentions.users.forEach(user => {
-        if (afkUsers.has(user.id)) {
-            message.channel.send(`⚠️ **${user.username}** şu an AFK! \n💬 **Sebep:** ${afkUsers.get(user.id)}`);
-        }
-    });
-
-    if (!message.content.startsWith('mem!')) return;
-    const args = message.content.slice(4).trim().split(/ +/);
-    const command = args.shift().toLowerCase();
-    const member = message.mentions.members.first();
-
-    if (command === 'afk') {
-        const sebep = args.join(' ') || "Belirtilmedi";
-        afkUsers.set(message.author.id, sebep);
-        return message.reply(`✅ **Başarıyla AFK moduna geçtin.** \n📝 **Sebep:** ${sebep}`);
+    if (message.mentions.users.size > 0) {
+        message.mentions.users.forEach(user => {
+            if (afkKullanicilar.has(user.id)) {
+                const data = afkKullanicilar.get(user.id);
+                message.reply(`**${user.username}** adlı kullanıcı **${data.sebep}** sebebiyle şu an AFK.`).then(m => setTimeout(() => m.delete().catch(() => {}), 8000));
+            }
+        });
     }
 
-    if (!isAuthorized(message.member)) return;
+    const ayar = sunucuVerisi[message.guild.id];
+    const yetkiliMi = message.member.permissions.has(PermissionFlagsBits.Administrator) || 
+                     (ayar?.modRolleri && message.member.roles.cache.some(r => ayar.modRolleri.includes(r.id)));
 
-    if (command === 'ban') {
-        const sebep = args.slice(1).join(' ') || "Sebep belirtilmedi";
-        if (!member) return message.reply("❌ **Hata:** Bir kullanıcı etiketlemelisin.");
-        await member.send(`🚫 **${message.guild.name}** sunucusundan banlandın! \n📝 **Sebep:** ${sebep}`).catch(() => {});
-        await member.ban({ reason: sebep }).then(() => {
-            message.reply(`✅ **${member.user.username}** başarıyla yasaklandı. \n📝 **Sebep:** ${sebep}`);
-        }).catch(() => message.reply("❌ **Hata:** Yetkim yetmiyor."));
+    const args = message.content.split(' ');
+    const command = args[0].toLowerCase();
 
-    } else if (command === 'at') {
-        const sebep = args.slice(1).join(' ') || "Sebep belirtilmedi";
-        if (!member) return message.reply("❌ **Hata:** Bir kullanıcı etiketlemelisin.");
-        await member.send(`👞 **${message.guild.name}** sunucusundan atıldın! \n📝 **Sebep:** ${sebep}`).catch(() => {});
-        await member.kick(sebep).then(() => {
-            message.reply(`✅ **${member.user.username}** başarıyla atıldı. \n📝 **Sebep:** ${sebep}`);
-        }).catch(() => message.reply("❌ **Hata:** Yetkim yetmiyor."));
+    // /yetkilisec
+    if (command === '/yetkilisec') {
+        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
+        const roller = message.mentions.roles;
+        if (roller.size === 0) return message.reply('❌ Lütfen rolleri etiketleyin.');
+        
+        sunucuVerisi[message.guild.id] = { ...ayar, modRolleri: roller.map(r => r.id) };
+        veriKaydet();
+        return message.reply(`Harika, **${roller.map(r => r.name).join(', ')}** adlı roller artık Moderatör komutlarını kullanabilecek.`);
+    }
 
-    } else if (command === 'sustur') {
-        const sure = parseInt(args[1]);
-        const sebep = args.slice(2).join(' ') || "Sebep belirtilmedi";
-        if (!member || !sure) return message.reply("❌ **Hata:** Kullanıcı etiketle ve süre (dakika) gir.");
-        await member.send(`🔇 **${message.guild.name}** sunucusunda **${sure}** dakika susturuldun. \n📝 **Sebep:** ${sebep}`).catch(() => {});
-        await member.timeout(sure * 60000, sebep).then(() => {
-            message.reply(`✅ **${member.user.username}**, **${sure}** dakika susturuldu. \n📝 **Sebep:** ${sebep}`);
-        }).catch(() => message.reply("❌ **Hata:** İşlem başarısız."));
+    // MODERASYON KOMUTLARI
+    if (command === 'mem!ban') {
+        if (!yetkiliMi) return;
+        const user = message.mentions.users.first();
+        const sebep = args.slice(2).join(' ') || 'Belirtilmedi';
+        if (!user) return message.reply('❌ Kullanıcı etiketle!');
+        await user.send(`⚠️ **${message.guild.name}** sunucusundan **${sebep}** sebebiyle banlandınız!`).catch(() => {});
+        await message.guild.members.ban(user, { reason: sebep });
+        message.reply(`✅ **${user.tag}** başarıyla banlandı.`);
+    }
 
-    } else if (command === 'uyarı') {
-        const sebep = args.slice(1).join(' ') || "Sebep belirtilmedi";
-        if (!member) return message.reply("❌ **Hata:** Bir kullanıcı etiketlemelisin.");
-        await member.send(`⚠️ **${message.guild.name}** sunucusunda uyarıldın! \n📝 **Sebep:** ${sebep}`).then(() => {
-            message.reply(`✅ **${member.user.username}** uyarıldı.`);
-        }).catch(() => message.reply("❌ **Hata:** DM kapalı."));
+    if (command === 'mem!kick') {
+        if (!yetkiliMi) return;
+        const member = message.mentions.members.first();
+        const sebep = args.slice(2).join(' ') || 'Belirtilmedi';
+        if (!member) return message.reply('❌ Kullanıcı etiketle!');
+        await member.send(`⚠️ **${message.guild.name}** sunucusundan **${sebep}** sebebiyle atıldınız!`).catch(() => {});
+        await member.kick(sebep);
+        message.reply(`✅ **${member.user.tag}** başarıyla atıldı.`);
+    }
 
-    } else if (command === 'sil') {
-        const miktar = parseInt(args[0]);
-        if (!miktar || miktar < 1 || miktar > 100) return message.reply("❌ **Hata:** 1-100 arası sayı gir.");
-        await message.channel.bulkDelete(miktar + 1, true).then(() => {
-            message.channel.send(`✅ **${miktar}** mesaj silindi.`).then(m => setTimeout(() => m.delete(), 5000));
-        }).catch(() => message.reply("❌ **Hata:** Silinemedi."));
+    if (command === 'mem!mute') {
+        if (!yetkiliMi) return;
+        const member = message.mentions.members.first();
+        const sure = parseInt(args[2]); 
+        const sebep = args.slice(3).join(' ') || 'Belirtilmedi';
+        if (!member || !sure) return message.reply('❌ `mem!mute @kullanıcı [dakika] [sebep]`');
+        await member.timeout(sure * 60 * 1000, sebep);
+        await member.send(`⚠️ **${message.guild.name}** sunucusunda **${sebep}** sebebiyle **${sure}** dakika susturuldunuz!`).catch(() => {});
+        message.reply(`✅ **${member.user.tag}** ${sure} dakika susturuldu.`);
+    }
 
-    } else if (command === 'lock') {
-        await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false }).then(() => {
-            message.reply("🔒 **Kanal kilitlendi.**");
-        }).catch(() => message.reply("❌ **Hata:** Kilitlenemedi."));
+    if (command === 'mem!lock') {
+        if (!yetkiliMi) return;
+        message.channel.permissionOverwrites.edit(message.guild.id, { SendMessages: false });
+        message.reply('🔒 Kanal kilitlendi.');
+    }
 
-    } else if (command === 'unlock') {
-        await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: null }).then(() => {
-            message.reply("🔓 **Kanalın kilidi açıldı. Herkes mesaj gönderebilir.**");
-        }).catch(() => message.reply("❌ **Hata:** Kilid açılamadı."));
+    if (command === 'mem!unlock') {
+        if (!yetkiliMi) return;
+        message.channel.permissionOverwrites.edit(message.guild.id, { SendMessages: true });
+        message.reply('🔓 Kanal açıldı.');
+    }
 
-    } else if (command === 'duyuru') {
+    if (command === 'mem!duyuru') {
+        if (!yetkiliMi) return;
         const kanal = message.mentions.channels.first();
-        const duyuruMesaji = args.slice(1).join(' ');
-        if (!kanal || !duyuruMesaji) return message.reply("❌ **Hata:** Kanal etiketle ve mesaj yaz.");
-        kanal.send(`📢 **DUYURU** \n\n${duyuruMesaji}`).then(() => {
-            message.reply(`✅ Duyuru paylaşıldı.`);
-        }).catch(() => message.reply("❌ **Hata:** Gönderilemedi."));
+        const duyuruMesaji = args.slice(2).join(' ');
+        if (!kanal || !duyuruMesaji) return;
+        const embed = new EmbedBuilder().setTitle('📣 Duyuru').setDescription(duyuruMesaji).setColor('Red');
+        kanal.send({ embeds: [embed] });
+        message.reply('✅ Duyuru gönderildi.');
+    }
+
+    if (command === 'mem!uyarı') {
+        if (!yetkiliMi) return;
+        const user = message.mentions.users.first();
+        const sebep = args.slice(2).join(' ') || 'Belirtilmedi';
+        if (!user) return;
+        await user.send(`⚠️ **${message.guild.name}** sunucusunda **${sebep}** sebebiyle uyarıldınız!`).catch(() => {});
+        message.reply(`✅ **${user.tag}** uyarıldı.`);
+    }
+
+    if (command === 'mem!afk') {
+        const sebep = args.slice(1).join(' ') || 'Belirtilmedi';
+        afkKullanicilar.set(message.author.id, { sebep: sebep });
+        message.reply(`✅ AFK moduna geçtin: **${sebep}**`).then(m => setTimeout(() => m.delete().catch(() => {}), 5000));
     }
 });
 
