@@ -1,9 +1,10 @@
-const { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits, AttachmentBuilder } = require('discord.js');
+const { WelcomeLeave } = require('canvacord');
 const fs = require('fs');
 const express = require('express');
 
 const app = express();
-app.get('/', (req, res) => res.send('Moderasyon Botu Aktif!'));
+app.get('/', (req, res) => res.send('MEM Moderasyon Aktif!'));
 app.listen(process.env.PORT || 3000);
 
 const client = new Client({
@@ -11,154 +12,180 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildEmojisAndStickers
+        GatewayIntentBits.GuildMembers
     ]
 });
 
 const prefix = "mem!";
-let botVerisi = { afk: {}, yetkiliRoller: [] };
+let botVerisi = { afk: {}, yetkiliRoller: [], kanallar: {} };
 
 if (fs.existsSync('./moderasyon.json')) {
-    try {
-        botVerisi = JSON.parse(fs.readFileSync('./moderasyon.json', 'utf8'));
-    } catch (e) { botVerisi = { afk: {}, yetkiliRoller: [] }; }
+    try { botVerisi = JSON.parse(fs.readFileSync('./moderasyon.json', 'utf8')); } catch (e) { console.log("Veri dosyası hatası."); }
 }
+function veriKaydet() { fs.writeFileSync('./moderasyon.json', JSON.stringify(botVerisi, null, 2)); }
 
-function veriKaydet() {
-    fs.writeFileSync('./moderasyon.json', JSON.stringify(botVerisi, null, 2));
-}
+client.on('ready', () => { console.log(`${client.user.tag} Moderasyon Botu Görevde!`); });
 
-client.on('ready', () => {
-    console.log(`${client.user.tag} Moderasyon Sistemi Hazır!`);
+// --- GİRİŞ SİSTEMİ ---
+client.on('guildMemberAdd', async (member) => {
+    const kanalId = botVerisi.kanallar?.[member.guild.id]?.hosgeldin;
+    if (!kanalId) return;
+    const kanal = member.guild.channels.cache.get(kanalId);
+    if (!kanal) return;
+
+    const welcome = new WelcomeLeave()
+        .setAvatar(member.user.displayAvatarURL({ extension: 'png' }))
+        .setDisplayName(member.user.username)
+        .setTitle("Hoş Geldin!")
+        .setMemberCount(member.guild.memberCount)
+        .setBackground("https://i.imgur.com/8PrZ94X.png");
+
+    const data = await welcome.build();
+    const attachment = new AttachmentBuilder(data, { name: 'hosgeldin.png' });
+
+    kanal.send({
+        content: `👋 **${member.user.username}** Sunucuya girdi, senin sayende **${member.guild.memberCount}** Olduk, Hoş geldin!`,
+        files: [attachment]
+    });
+});
+
+// --- ÇIKIŞ SİSTEMİ ---
+client.on('guildMemberRemove', async (member) => {
+    const kanalId = botVerisi.kanallar?.[member.guild.id]?.hoscakal;
+    if (!kanalId) return;
+    const kanal = member.guild.channels.cache.get(kanalId);
+    if (!kanal) return;
+
+    const leave = new WelcomeLeave()
+        .setAvatar(member.user.displayAvatarURL({ extension: 'png' }))
+        .setDisplayName(member.user.username)
+        .setTitle("Hoşça Kal")
+        .setMemberCount(member.guild.memberCount)
+        .setBackground("https://i.imgur.com/8PrZ94X.png");
+
+    const data = await leave.build();
+    const attachment = new AttachmentBuilder(data, { name: 'hoscakal.png' });
+
+    kanal.send({
+        content: `😢 **${member.user.username}** Sunucudan ayrıldı, görüşmek üzere tekrardan bekleriz.`,
+        files: [attachment]
+    });
 });
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
-    // --- AFK KONTROL ---
+    // AFK Sistemi Kontrolü
     if (message.mentions.users.size > 0) {
         message.mentions.users.forEach(user => {
-            if (botVerisi.afk && botVerisi.afk[user.id]) {
-                message.reply(`📌 **${user.username}** şu an AFK! Sebep: **${botVerisi.afk[user.id]}**`);
-            }
+            if (botVerisi.afk?.[user.id]) message.reply(`📌 **${user.username}** şu an AFK! Sebep: **${botVerisi.afk[user.id]}**`);
         });
     }
-    if (botVerisi.afk && botVerisi.afk[message.author.id]) {
+    if (botVerisi.afk?.[message.author.id]) {
         delete botVerisi.afk[message.author.id];
         veriKaydet();
-        message.reply(`👋 Hoş geldin **${message.author.username}**, AFK modundan çıkarıldın!`);
+        message.reply(`👋 Hoş geldin **${message.author.username}**, AFK modundan çıktın.`);
     }
 
     if (!message.content.startsWith(prefix) && message.content !== '/yetkilisec') return;
-
     const args = message.content.slice(prefix.length).trim().split(/ +/);
     const command = message.content.startsWith(prefix) ? args.shift().toLowerCase() : message.content;
 
-    // Yetki Kontrolü
     const yetkiliMi = () => {
         if (message.member.permissions.has(PermissionFlagsBits.Administrator)) return true;
         return message.member.roles.cache.some(role => botVerisi.yetkiliRoller?.includes(role.id));
     };
 
-    // --- YETKİLİ SEÇİMİ ---
     if (command === '/yetkilisec') {
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
-        const roller = message.mentions.roles.map(r => r.id);
-        botVerisi.yetkiliRoller = roller;
+        botVerisi.yetkiliRoller = message.mentions.roles.map(r => r.id);
         veriKaydet();
-        message.reply(`✅ Yetkili rolleri güncellendi!`);
-        return;
+        return message.reply("✅ Yetkili rolleri kaydedildi.");
     }
 
-    // --- MODERATÖR KOMUTLARI (YETKİ GEREKTİRİR) ---
     if (!yetkiliMi() && command !== 'afk') return;
 
-    // --- YENİ: MESAJ SİLME KOMUTU (mem!sil) ---
+    // Komutlar
     if (command === 'sil') {
-        let miktar = parseInt(args[0]);
-        if (!miktar || isNaN(miktar) || miktar < 1 || miktar > 110) {
-            return message.reply("❌ Lütfen silinecek mesaj sayısını girin (Maksimum: 110).");
-        }
-
-        try {
-            let silinenToplam = 0;
-            if (miktar > 100) {
-                const s1 = await message.channel.bulkDelete(100, true);
-                const s2 = await message.channel.bulkDelete(miktar - 100, true);
-                silinenToplam = s1.size + s2.size;
-            } else {
-                const s = await message.channel.bulkDelete(miktar, true);
-                silinenToplam = s.size;
-            }
-
-            const onay = await message.channel.send(`✅ Başarıyla **${silinenToplam}** adet mesaj silindi!`);
-            // Onay mesajını 5 saniye sonra siler (isteğe bağlı)
-            setTimeout(() => onay.delete().catch(() => {}), 5000);
-        } catch (err) {
-            message.reply("❌ Mesajlar silinirken bir hata oluştu. (Not: 14 günden eski mesajlar teknik olarak silinemez).");
-        }
+        let sayi = parseInt(args[0]);
+        if (!sayi || sayi < 1 || sayi > 110) return message.reply("❌ 1-110 arası sayı gir!");
+        await message.channel.bulkDelete(sayi > 100 ? 100 : sayi, true);
+        if (sayi > 100) await message.channel.bulkDelete(sayi - 100, true);
+        message.channel.send(`✅ Başarıyla **${sayi}** mesaj silindi.`).then(m => setTimeout(() => m.delete(), 5000));
     }
 
-    // --- DİĞER MODERASYON KOMUTLARI ---
+    if (command === 'hoşgeldin') {
+        const kanal = message.mentions.channels.first();
+        if (!botVerisi.kanallar[message.guild.id]) botVerisi.kanallar[message.guild.id] = {};
+        botVerisi.kanallar[message.guild.id].hosgeldin = kanal?.id;
+        veriKaydet();
+        message.reply(`✅ Hoş geldin kanalı ${kanal} olarak ayarlandı.`);
+    }
+
+    if (command === 'hoşçakal') {
+        const kanal = message.mentions.channels.first();
+        if (!botVerisi.kanallar[message.guild.id]) botVerisi.kanallar[message.guild.id] = {};
+        botVerisi.kanallar[message.guild.id].hoscakal = kanal?.id;
+        veriKaydet();
+        message.reply(`✅ Hoşça kal kanalı ${kanal} olarak ayarlandı.`);
+    }
+
     if (command === 'emojiekle') {
-        const url = args[0];
-        const isim = args[1] || "emoji";
-        if (!url) return message.reply("❌ URL belirtin.");
-        try {
-            const emoji = await message.guild.emojis.create({ attachment: url, name: isim });
-            message.reply(`✅ Emoji eklendi: ${emoji.toString()}`);
-        } catch (e) { message.reply("❌ Emoji eklenemedi."); }
+        const url = args[0]; const isim = args[1];
+        if (!url || !isim) return message.reply("❌ `mem!emojiekle [URL] [İsim]`");
+        message.guild.emojis.create({ attachment: url, name: isim })
+            .then(e => message.reply(`✅ Emoji eklendi: ${e.toString()}`))
+            .catch(() => message.reply("❌ Hata oluştu."));
     }
 
     if (command === 'ban') {
         const user = message.mentions.users.first();
-        const sebep = args.slice(1).join(" ") || "Sebep belirtilmedi";
-        if (!user) return message.reply("❌ Üye etiketleyin.");
-        await user.send(`🚫 **${message.guild.name}** sunucusundan banlandın.`).catch(() => {});
-        await message.guild.members.ban(user, { reason: sebep });
-        message.reply(`✅ **${user.tag}** banlandı.`);
+        const sebep = args.slice(1).join(" ") || "Sebep yok";
+        if (!user) return;
+        await user.send(`🚫 **${message.guild.name}** sunucusundan banlandın. Sebep: ${sebep}`).catch(() => {});
+        message.guild.members.ban(user, { reason: sebep });
+        message.reply(`✅ ${user.tag} yasaklandı.`);
     }
 
     if (command === 'kick') {
         const user = message.mentions.users.first();
-        if (!user) return message.reply("❌ Üye etiketleyin.");
+        if (!user) return;
         await user.send(`👢 **${message.guild.name}** sunucusundan atıldın.`).catch(() => {});
-        await message.guild.members.kick(user);
-        message.reply(`✅ **${user.tag}** atıldı.`);
+        message.guild.members.kick(user);
+        message.reply(`✅ ${user.tag} atıldı.`);
     }
 
     if (command === 'mute') {
-        const user = message.mentions.members.first();
+        const member = message.mentions.members.first();
         const sure = parseInt(args[1]);
-        if (!user || !sure) return message.reply("❌ `mem!mute @üye [dakika]`");
-        await user.timeout(sure * 60 * 1000);
-        message.reply(`✅ **${user.user.tag}** susturuldu.`);
+        if (!member || !sure) return;
+        await member.timeout(sure * 60 * 1000);
+        message.reply(`✅ ${member.user.tag} ${sure} dakika susturuldu.`);
     }
 
     if (command === 'lock') {
-        await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
+        message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
         message.reply("🔒 Kanal kilitlendi.");
     }
 
     if (command === 'unlock') {
-        await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: true });
+        message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: true });
         message.reply("🔓 Kanal açıldı.");
     }
 
     if (command === 'duyuru') {
         const kanal = message.mentions.channels.first();
         const metin = args.slice(1).join(" ");
-        if (!kanal || !metin) return message.reply("❌ `mem!duyuru #kanal [mesaj]`");
+        if (!kanal || !metin) return;
         const embed = new EmbedBuilder().setTitle("📢 Duyuru").setDescription(metin).setColor("Red");
         kanal.send({ embeds: [embed] });
     }
 
     if (command === 'uyarı') {
         const user = message.mentions.users.first();
-        if (!user) return message.reply("❌ Üye etiketleyin.");
-        await user.send(`⚠️ **${message.guild.name}** sunucusunda uyarıldın!`).catch(() => {});
-        message.reply(`✅ **${user.tag}** uyarıldı.`);
+        if (!user) return;
+        user.send(`⚠️ **${message.guild.name}** sunucusunda uyarıldın!`).catch(() => {});
+        message.reply(`✅ ${user.tag} uyarıldı.`);
     }
 
     if (command === 'afk') {
@@ -166,7 +193,7 @@ client.on('messageCreate', async (message) => {
         if (!botVerisi.afk) botVerisi.afk = {};
         botVerisi.afk[message.author.id] = sebep;
         veriKaydet();
-        message.reply(`✅ AFK moduna girildi: **${sebep}**`);
+        message.reply(`✅ AFK moduna girdin: **${sebep}**`);
     }
 });
 
