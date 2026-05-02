@@ -18,11 +18,12 @@ const client = new Client({
 const prefix = "mem!";
 let botVerisi = { afk: {}, yetkiliRoller: [] };
 
+// Veriyi dosyadan yükle
 if (fs.existsSync('./moderasyon.json')) {
     try { 
         botVerisi = JSON.parse(fs.readFileSync('./moderasyon.json', 'utf8')); 
     } catch (e) { 
-        console.log("Veri dosyası hatası."); 
+        console.log("Veri dosyası okunurken hata oluştu."); 
     }
 }
 
@@ -37,7 +38,7 @@ client.on('ready', () => {
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
-    // AFK Kontrol
+    // AFK Sistemi
     if (message.mentions.users.size > 0) {
         message.mentions.users.forEach(user => {
             if (botVerisi.afk?.[user.id]) message.reply(`📌 **${user.username}** şu an AFK! Sebep: **${botVerisi.afk[user.id]}**`);
@@ -49,82 +50,87 @@ client.on('messageCreate', async (message) => {
         message.reply(`👋 Hoş geldin **${message.author.username}**, AFK modundan çıktın.`);
     }
 
-    if (!message.content.startsWith(prefix) && message.content !== '/yetkilisec') return;
-    const args = message.content.slice(prefix.length).trim().split(/ +/);
-    const command = message.content.startsWith(prefix) ? args.shift().toLowerCase() : message.content;
+    // Komut Ayıklama
+    if (!message.content.startsWith(prefix) && !message.content.startsWith('/yetkilisec')) return;
+    
+    const args = message.content.startsWith(prefix) 
+        ? message.content.slice(prefix.length).trim().split(/ +/)
+        : message.content.slice(1).trim().split(/ +/);
+    const command = args.shift().toLowerCase();
 
+    // Yetki Kontrol Fonksiyonu
     const yetkiliMi = () => {
         if (message.member.permissions.has(PermissionFlagsBits.Administrator)) return true;
-        return message.member.roles.cache.some(role => botVerisi.yetkiliRoller?.includes(role.id));
+        if (botVerisi.yetkiliRoller.length === 0) return false;
+        return message.member.roles.cache.some(role => botVerisi.yetkiliRoller.includes(role.id));
     };
 
-    // Yetki Kontrolü ve Uyarı Mesajı
+    // --- ÖZEL YETKİLİ SEÇME KOMUTU ---
+    if (command === 'yetkilisec') {
+        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
+        
+        const roller = message.mentions.roles;
+        if (roller.size === 0) return message.reply("❌ Lütfen yetkili olacak rolleri etiketleyin! Örn: `/yetkilisec @Moderatör` ");
+
+        botVerisi.yetkiliRoller = roller.map(r => r.id);
+        veriKaydet();
+        
+        const isimler = roller.map(r => r.name).join(", ");
+        return message.reply(`✅ Yetkili rolleri başarıyla güncellendi: **${isimler}**`);
+    }
+
+    // Yetkisiz Kullanım Uyarısı (AFK komutu hariç)
     if (command !== 'afk' && !yetkiliMi()) {
         return message.reply("❌ Sen bu sunucuda yetkili değilsin ve yetkili komutlarını kullanamazsın!");
     }
 
-    if (command === '/yetkilisec') {
-        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
-        botVerisi.yetkiliRoller = message.mentions.roles.map(r => r.id);
-        veriKaydet();
-        return message.reply("✅ Yetkili rolleri kaydedildi.");
-    }
+    // --- MODERASYON KOMUTLARI ---
 
-    // --- ROL VERME KOMUTU ---
     if (command === 'rolver') {
         const member = message.mentions.members.first();
         const rolIsmi = args.slice(1).join(" ");
         const rol = message.mentions.roles.first() || message.guild.roles.cache.find(r => r.name === rolIsmi || r.id === rolIsmi);
 
-        if (!member || !rolIsmi) return message.reply("❌ Kullanım: `mem!rolver @kişi Rolİsmi` veya `mem!rolver @kişi @Rol` ");
-        if (!rol) return message.reply(`❌ **${rolIsmi}** isminde bir rol sunucuda bulunamadı.`);
+        if (!member || !rolIsmi) return message.reply("❌ Kullanım: `mem!rolver @kişi Rolİsmi` ");
+        if (!rol) return message.reply(`❌ **${rolIsmi}** rolü bulunamadı.`);
 
         try {
             await member.roles.add(rol);
             message.reply(`✅ **${member.user.username}** adlı kişiye başarıyla **${rol.name}** adlı rol verildi.`);
         } catch (e) {
-            let sebep = "bilinmeyen bir hata";
-            if (rol.position >= message.guild.members.me.roles.highest.position) sebep = "bu rol benim rolümden daha üstte bir konumda";
-            else if (!message.guild.members.me.permissions.has(PermissionFlagsBits.ManageRoles)) sebep = "Rolleri Yönet yetkim yok";
-            
-            message.reply(`❌ **${member.user.username}** adlı kişiye **${rol.name}** adlı rol **${sebep}** sebebinden dolayı verilemedi.`);
+            message.reply(`❌ **${member.user.username}** adlı kişiye **${rol.name}** adlı rol **botun yetkisi yetmediği için** verilemedi.`);
         }
     }
 
-    // --- ROL ALMA KOMUTU ---
     if (command === 'rolal') {
         const member = message.mentions.members.first();
         const rolIsmi = args.slice(1).join(" ");
         const rol = message.mentions.roles.first() || message.guild.roles.cache.find(r => r.name === rolIsmi || r.id === rolIsmi);
 
-        if (!member || !rolIsmi) return message.reply("❌ Kullanım: `mem!rolal @kişi Rolİsmi` veya `mem!rolal @kişi @Rol` ");
-        if (!rol) return message.reply(`❌ **${rolIsmi}** isminde bir rol sunucuda bulunamadı.`);
+        if (!member || !rolIsmi) return message.reply("❌ Kullanım: `mem!rolal @kişi Rolİsmi` ");
+        if (!rol) return message.reply(`❌ **${rolIsmi}** rolü bulunamadı.`);
 
         try {
             await member.roles.remove(rol);
             message.reply(`✅ **${member.user.username}** adlı kişiden başarıyla **${rol.name}** adlı rol alındı.`);
         } catch (e) {
-            let sebep = "bilinmeyen bir hata";
-            if (rol.position >= message.guild.members.me.roles.highest.position) sebep = "bu rol benim rolümden daha üstte bir konumda";
-            
-            message.reply(`❌ **${member.user.username}** adlı kişiden **${rol.name}** adlı rol **${sebep}** sebebinden dolayı alınamadı.`);
+            message.reply(`❌ **${member.user.username}** adlı kişiden **${rol.name}** adlı rol **botun yetkisi yetmediği için** alınamadı.`);
         }
     }
 
-    // --- DİĞER MODERASYON KOMUTLARI ---
     if (command === 'mute') {
         const member = message.mentions.members.first();
         const dakika = parseInt(args[1]);
-        if (!member || isNaN(dakika)) return message.reply("❌ Kullanım: `mem!mute @üye [dakika]`");
+        if (!member || isNaN(dakika)) return message.reply("❌ Kullanım: `mem!mute @üye [dakika]` ");
         try {
             await member.timeout(dakika * 60 * 1000);
-            message.reply(`✅ **${member.user.tag}** tam **${dakika}** dakika boyunca susturuldu.`);
+            message.reply(`✅ **${member.user.tag}** tam **${dakika}** dakika susturuldu.`);
         } catch (e) { message.reply("❌ Yetkim yetmiyor."); }
     }
 
     if (command === 'unmute') {
         const member = message.mentions.members.first();
-        if (!member) return message.reply("❌ Birini etiketle!");
+        if (!member) return;
         await member.timeout(null);
         message.reply(`✅ **${member.user.tag}** mutesi kaldırıldı.`);
     }
@@ -135,7 +141,7 @@ client.on('messageCreate', async (message) => {
         try {
             await message.guild.members.unban(userId);
             message.reply(`✅ ID: **${userId}** olan kullanıcının banı kaldırıldı.`);
-        } catch (e) { message.reply("❌ İşlem başarısız."); }
+        } catch (e) { message.reply("❌ Ban kaldırılamadı."); }
     }
 
     if (command === 'sil') {
@@ -147,7 +153,7 @@ client.on('messageCreate', async (message) => {
 
     if (command === 'ban') {
         const user = message.mentions.users.first();
-        if (!user) return message.reply("❌ Birini etiketle!");
+        if (!user) return;
         try {
             await message.guild.members.ban(user);
             message.reply(`✅ ${user.tag} yasaklandı.`);
@@ -156,7 +162,7 @@ client.on('messageCreate', async (message) => {
 
     if (command === 'kick') {
         const user = message.mentions.users.first();
-        if (!user) return message.reply("❌ Birini etiketle!");
+        if (!user) return;
         try {
             await message.guild.members.kick(user);
             message.reply(`✅ ${user.tag} atıldı.`);
@@ -175,7 +181,6 @@ client.on('messageCreate', async (message) => {
 
     if (command === 'afk') {
         const sebep = args.join(" ") || "Meşgul";
-        if (!botVerisi.afk) botVerisi.afk = {};
         botVerisi.afk[message.author.id] = sebep;
         veriKaydet();
         message.reply(`✅ AFK moduna girdin: **${sebep}**`);
