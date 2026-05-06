@@ -56,6 +56,32 @@ client.on('messageCreate', async (message) => {
         : message.content.slice(1).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
+    // --- GENEL KOMUTLAR (Yetki Gerektirmeyenler) ---
+
+    // mem!owner Komutu
+    if (command === 'owner') {
+        const owner = await message.guild.fetchOwner();
+        const embed = new EmbedBuilder()
+            .setTitle('👑 Sunucu Sahibi')
+            .setDescription(`Bu sunucunun kurucusu: **${owner.user.tag}**\nID: \`${owner.id}\``)
+            .setThumbnail(owner.user.displayAvatarURL({ dynamic: true }))
+            .setColor('#f1c40f')
+            .setTimestamp();
+        return message.reply({ embeds: [embed] });
+    }
+
+    // mem!avatar Komutu
+    if (command === 'avatar') {
+        const user = message.mentions.users.first() || message.author;
+        const embed = new EmbedBuilder()
+            .setTitle(`${user.username}#${user.discriminator} Avatarı`)
+            .setImage(user.displayAvatarURL({ dynamic: true, size: 1024 }))
+            .setColor('#3498db')
+            .setFooter({ text: `İsteyen: ${message.author.tag}` });
+        return message.reply({ embeds: [embed] });
+    }
+
+    // --- YETKİ KONTROLÜ ---
     const yetkiliMi = () => {
         if (message.member.permissions.has(PermissionFlagsBits.Administrator)) return true;
         return message.member.roles.cache.some(role => botVerisi.yetkiliRoller.includes(role.id));
@@ -75,38 +101,28 @@ client.on('messageCreate', async (message) => {
         return message.reply("❌ Sen bu sunucuda yetkili değilsin ve yetkili komutlarını kullanamazsın!");
     }
 
-    // --- GELİŞMİŞ LOCK (KİLİT) KOMUTU ---
+    // --- YETKİLİ KOMUTLARI ---
+
     if (command === 'lock') {
         try {
-            // Herkesin yazmasını kapat
             await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
-            
-            // Seçilen yetkili rollere yazma izni ver
             if (botVerisi.yetkiliRoller.length > 0) {
                 for (const rolId of botVerisi.yetkiliRoller) {
                     const rol = message.guild.roles.cache.get(rolId);
-                    if (rol) {
-                        await message.channel.permissionOverwrites.edit(rol, { SendMessages: true });
-                    }
+                    if (rol) await message.channel.permissionOverwrites.edit(rol, { SendMessages: true });
                 }
             }
             message.reply("🔒 Kanal kilitlendi. Sadece yetkililer mesaj gönderebilir.");
-        } catch (e) {
-            message.reply("❌ Kanal kilitlenirken bir hata oluştu.");
-        }
+        } catch (e) { message.reply("❌ Kanal kilitlenirken bir hata oluştu."); }
     }
 
     if (command === 'unlock') {
         try {
             await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: null });
-            // Yetkililerin özel izinlerini de sıfırla (isteğe bağlı, null yapmak kanalı varsayılana döndürür)
             message.reply("🔓 Kanal kilidi açıldı. Herkes tekrar mesaj gönderebilir.");
-        } catch (e) {
-            message.reply("❌ Kanal açılırken bir hata oluştu.");
-        }
+        } catch (e) { message.reply("❌ Kanal açılırken bir hata oluştu."); }
     }
 
-    // --- DUYURU ---
     if (command === 'duyuru') {
         const kanal = message.mentions.channels.first();
         const duyuruMesaji = args.slice(1).join(" ");
@@ -116,7 +132,6 @@ client.on('messageCreate', async (message) => {
         message.reply("✅ Duyuru gönderildi.");
     }
 
-    // --- MODERASYON ---
     if (command === 'rolver') {
         const member = message.mentions.members.first();
         const rol = message.mentions.roles.first() || message.guild.roles.cache.find(r => r.name === args.slice(1).join(" "));
