@@ -14,26 +14,40 @@ const client = new Client({
 });
 
 const prefix = "mem!";
-let botVerisi = { uyarilar: {}, ticketCount: 0, sunucuAyarlar: {}, sayi: {}, kelime: {}, tuttu: {}, yetkiliRoller: [], afk: {} };
+// linkEngel ayarını da veritabanına dahil ettik
+let botVerisi = { uyarilar: {}, ticketCount: 0, sunucuAyarlar: {}, sayi: {}, kelime: {}, tuttu: {}, yetkiliRoller: [], afk: {}, linkEngel: {} };
 
-// Veritabanı Dosyası Yükleme
 if (fs.existsSync('./database.json')) {
     try { botVerisi = JSON.parse(fs.readFileSync('./database.json', 'utf8')); } catch (e) { console.log("Veri dosyası yükleme hatası."); }
 }
 function veriKaydet() { fs.writeFileSync('./database.json', JSON.stringify(botVerisi, null, 2)); }
 
-client.on('ready', () => { console.log(`${client.user.tag} | TÜM SİSTEMLER EKSİKSİZ AKTİF!`); });
+client.on('ready', () => { console.log(`${client.user.tag} | TÜM SİSTEMLER YENİ KOMUTLARLA AKTİF!`); });
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
-    // --- 1. KORUMALI OYUN MOTORLARI ---
-    // Sayı Saymaca Korunmuş Kanal Kontrolü
+    // Yetki Kontrol Fonksiyonu (Yöneticiler veya bot yetkilileri)
+    const canUse = message.member.permissions.has(PermissionFlagsBits.Administrator) || botVerisi.yetkiliRoller.some(r => message.member.roles.cache.has(r));
+
+    // --- LINK VE DOSYA ENGEL SİSTEMİ ---
+    if (botVerisi.linkEngel?.[message.guild.id] && !canUse) {
+        const linkRegex = /(https?:\/\/[^\s]+)/g;
+        const discordInviteRegex = /(discord\.(gg|io|me|li)\/[^\s]+)/g;
+        
+        // Mesajda link varsa veya dosya/ek yüklenmişse engelle
+        if (linkRegex.test(message.content) || discordInviteRegex.test(message.content) || message.attachments.size > 0) {
+            await message.delete().catch(() => {});
+            return message.channel.send(`⚠️ ${message.author}, bu sunucuda link, davet bağlantısı veya dosya paylaşımı yapmak yasaktır!`).then(m => setTimeout(() => m.delete(), 3000));
+        }
+    }
+
+    // --- KORUMALI OYUN MOTORLARI ---
     if (botVerisi.sayi[message.channel.id]) {
         const d = botVerisi.sayi[message.channel.id];
         const n = parseInt(message.content);
         if (isNaN(n)) {
-            await message.delete();
+            await message.delete().catch(() => {});
             return message.channel.send(`⚠️ ${message.author}, sadece sayı yaz!`).then(m => setTimeout(() => m.delete(), 2000));
         }
         if (n === d.sonSayi + 1 && message.author.id !== d.sonKullanici) {
@@ -46,7 +60,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // --- 2. AFK SİSTEMİ ---
+    // --- AFK SİSTEMİ ---
     if (message.mentions.users.size > 0) {
         message.mentions.users.forEach(user => {
             if (botVerisi.afk?.[user.id]) message.channel.send(`📌 **${user.username}** AFK! Sebep: **${botVerisi.afk[user.id]}**`);
@@ -57,7 +71,7 @@ client.on('messageCreate', async (message) => {
         message.channel.send(`👋 Hoş geldin **${message.author.username}**, AFK modun kapatıldı.`);
     }
 
-    // --- 3. /SETUP TICKET KURULUM KOMUTU ---
+    // --- /SETUP TICKET KURULUM KOMUTU ---
     if (message.content === '/setup') {
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return message.reply("❌ Bu kurulumu sadece yöneticiler yapabilir.");
 
@@ -104,23 +118,83 @@ client.on('messageCreate', async (message) => {
         } catch (e) { return message.reply("❌ Zaman aşımı veya kurulum hatası oluştu."); }
     }
 
-    // --- 4. PREFIX'Lİ KOMUT KONTROLÜ ---
+    // --- PREFIX'Lİ KOMUT KONTROLÜ ---
     if (!message.content.startsWith(prefix)) return;
     const args = message.content.slice(prefix.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    // Komut Havuzu Kontrolü (Hatalı komut uyarısı için)
-    const tumKomutlar = ['komutlar', 'afk', 'owner', 'avatar', 'mute', 'unmute', 'ban', 'kick', 'sil', 'lock', 'unlock', 'uyarı', 'rolver', 'rolal', 'yetkilisec', 'sayısaymaca', 'ship'];
+    // Yeni komutları listeye ekledik
+    const tumKomutlar = ['komutlar', 'afk', 'owner', 'avatar', 'mute', 'unmute', 'ban', 'kick', 'sil', 'lock', 'unlock', 'uyarı', 'rolver', 'rolal', 'yetkilisec', 'sayısaymaca', 'ship', 'duyuru', 'kurallar', 'linkengel-on', 'linkengel-off', 'yavaşmod'];
     if (!tumKomutlar.includes(command)) return message.reply(`❌ \`${prefix}${command}\` komutu bulunamadı.`);
 
-    // 'ship', 'komutlar', 'afk', 'avatar', 'owner' komutları herkese açık olsun; diğer moderasyon komutları yetki istesin.
+    // Genel yetkisiz komutlar listesi
     const genelKomutlar = ['ship', 'komutlar', 'afk', 'avatar', 'owner'];
-    if (!genelKomutlar.includes(command)) {
-        const canUse = message.member.permissions.has(PermissionFlagsBits.Administrator) || botVerisi.yetkiliRoller.some(r => message.member.roles.cache.has(r));
-        if (!canUse) return message.reply("❌ Bu komutu kullanmak için yetkiniz bulunmuyor.");
+    if (!genelKomutlar.includes(command) && !canUse) {
+        return message.reply("❌ Bu komutu kullanmak için yetkiniz bulunmuyor.");
     }
 
-    // --- SHIP KOMUTU (RESİMLİ VE TERMOMETRELİ) ---
+    // --- YENİ: DUYURU KOMUTU ---
+    if (command === 'duyuru') {
+        const hedefKanal = message.mentions.channels.first();
+        const duyuruMesaji = args.slice(1).join(" ");
+        if (!hedefKanal || !duyuruMesaji) return message.reply(`❌ Yanlış Kullanım! Örnek: \`${prefix}duyuru #kanal [Mesajınız]\``);
+
+        const duyuruEmbed = new EmbedBuilder()
+            .setTitle("📢 YENİ DUYURU")
+            .setDescription(duyuruMesaji)
+            .setColor("Red") // İstediğin gibi kırmızı çizgi rengi
+            .setTimestamp()
+            .setFooter({ text: `${message.guild.name} Yönetimi`, iconURL: message.guild.iconURL() });
+
+        await hedefKanal.send({ embeds: [duyuruEmbed] });
+        return message.reply(`✅ Duyuru başarıyla ${hedefKanal} kanalında paylaşıldı.`);
+    }
+
+    // --- YENİ: KURALLAR KOMUTU ---
+    if (command === 'kurallar') {
+        const kurallarEmbed = new EmbedBuilder()
+            .setTitle(`📜 ${message.guild.name} Sunucu Kuralları`)
+            .setDescription("Sunucumuzun düzenini korumak amacıyla lütfen aşağıda belirtilen kurallara hassasiyet gösteriniz:")
+            .setColor("Red")
+            .addFields(
+                { name: "⚖️ 1. Saygı ve Hoşgörü", value: "Sunucu içerisindeki tüm üyelere ve yetkililere saygılı olmak zorunludur. Küfür, hakaret ve argo kesinlikle yasaktır." },
+                { name: "🚫 2. Reklam ve Spam", value: "Kanallarda veya üyelerin DM kutularında reklam yapmak, spam veya flood yapmak yasaktır." },
+                { name: "👤 3. Profil ve İsim Düzeni", value: "Siyasi, dini, uygunsuz veya saldırgan profil resimleri, durum mesajları ve kullanıcı adları kullanılamaz." },
+                { name: "⚖️ 4. Kişisel Haklar", value: "Din, dil, ırk, mezhep veya cinsiyet ayrımcılığı yapmak, kişilerin özel hayatını (ifşa vb.) paylaşmak kesinlikle kalıcı yasaklanma sebebidir." },
+                { name: "📌 5. Kanal Amacı", value: "Her yazı ve görsel, kendi amacına uygun olarak açılmış doğru kanallarda paylaşılmalıdır." }
+            )
+            .setFooter({ text: "Sunucuya katılan tüm üyeler kuralları okumuş sayılır.", iconURL: message.guild.iconURL() })
+            .setTimestamp();
+
+        return message.channel.send({ content: "@everyone", embeds: [kurallarEmbed] });
+    }
+
+    // --- YENİ: LINK ENGEL ON/OFF KOMUTLARI ---
+    if (command === 'linkengel-on') {
+        botVerisi.linkEngel[message.guild.id] = true;
+        veriKaydet();
+        return message.reply("✅ **Link ve Dosya koruma sistemi başarıyla AKTİF edildi!** Yetkililer hariç link ve dosya paylaşımı engellendi.");
+    }
+
+    if (command === 'linkengel-off') {
+        botVerisi.linkEngel[message.guild.id] = false;
+        veriKaydet();
+        return message.reply("❌ **Link ve Dosya koruma sistemi KAPATILDI!** Artık herkes paylaşım yapabilir.");
+    }
+
+    // --- YENİ: YAVAŞ MOD KOMUTU ---
+    if (command === 'yavaşmod') {
+        const sure = parseInt(args[0]);
+        if (isNaN(sure) || sure < 0) return message.reply(`❌ Lütfen geçerli bir saniye girin! Örnek: \`${prefix}yavaşmod 5\` (Kapatmak için 0 yazın)`);
+
+        try {
+            await message.channel.setRateLimitPerUser(sure);
+            if (sure === 0) return message.reply("✨ Kanaldaki yavaş mod süresi tamamen kaldırıldı.");
+            return message.reply(`⏱️ Bu kanalın yavaş modu başarıyla **${sure} saniye** olarak ayarlandı.`);
+        } catch (e) { return message.reply("❌ Yavaş mod ayarlanırken bir hata oluştu, yetkilerimi kontrol edin."); }
+    }
+
+    // --- SHIP KOMUTU ---
     if (command === 'ship') {
         const mList = await message.guild.members.fetch();
         const baskaUyeler = mList.filter(m => !m.user.bot && m.id !== message.author.id);
@@ -141,20 +215,25 @@ client.on('messageCreate', async (message) => {
         ctx.fillStyle = '#232428'; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
         try {
-            const av1 = await loadImage(message.author.displayAvatarURL({ extension: 'png', size: 128 }));
-            const av2 = await loadImage(shipKisi.displayAvatarURL({ extension: 'png', size: 128 }));
+            const av1Url = message.author.displayAvatarURL({ forceStatic: true, extension: 'png', size: 128 });
+            const av2Url = shipKisi.displayAvatarURL({ forceStatic: true, extension: 'png', size: 128 });
 
-            ctx.save(); ctx.beginPath(); ctx.arc(100, 125, 60, 0, Math.PI * 2); ctx.clip(); ctx.drawImage(av1, 40, 65, 120, 120); ctx.restore();
-            ctx.save(); ctx.beginPath(); ctx.arc(500, 125, 60, 0, Math.PI * 2); ctx.clip(); ctx.drawImage(av2, 440, 65, 120, 120); ctx.restore();
+            const av1 = await loadImage(av1Url);
+            const av2 = await loadImage(av2Url);
 
-            // Aşk Ölçer Termometre Çizimi
-            ctx.fillStyle = '#4f545c'; ctx.roundRect(285, 50, 30, 120, 15); ctx.fill();
+            ctx.save(); ctx.beginPath(); ctx.arc(100, 125, 60, 0, Math.PI * 2); ctx.closePath(); ctx.clip();
+            ctx.drawImage(av1, 40, 65, 120, 120); ctx.restore();
+
+            ctx.save(); ctx.beginPath(); ctx.arc(500, 125, 60, 0, Math.PI * 2); ctx.closePath(); ctx.clip();
+            ctx.drawImage(av2, 440, 65, 120, 120); ctx.restore();
+
+            ctx.fillStyle = '#4f545c'; ctx.fillRect(285, 50, 30, 120);
             ctx.beginPath(); ctx.arc(300, 180, 25, 0, Math.PI * 2); ctx.fill();
 
             const red = Math.floor((askYuzdesi / 100) * 255);
             ctx.fillStyle = `rgb(${red}, 0, ${255 - red})`;
             const doluluk = (askYuzdesi / 100) * 120;
-            ctx.roundRect(288, 170 - doluluk, 24, doluluk, 10); ctx.fill();
+            ctx.fillRect(288, 170 - doluluk, 24, doluluk);
             ctx.beginPath(); ctx.arc(300, 180, 20, 0, Math.PI * 2); ctx.fill();
 
             ctx.fillStyle = '#ffffff'; ctx.font = 'bold 24px sans-serif'; ctx.textAlign = 'center';
@@ -163,7 +242,7 @@ client.on('messageCreate', async (message) => {
             const attachment = new AttachmentBuilder(await canvas.toBuffer(), { name: 'ship.png' });
             return message.reply({ content: `💞 ${message.author} artık **${shipKisi}** ile shiplendi!\n💘 **Aşk Seviyesi:** %${askYuzdesi}\n💬 *"${soz}"*`, files: [attachment] });
         } catch (e) {
-            return message.reply(`💞 ${message.author} ve **${shipKisi}** shiplendi! \n💘 **Aşk Seviyesi:** %${askYuzdesi}\n💬 *"${soz}"*`);
+            return message.reply(`💞 ${message.author} artık **${shipKisi}** ile shiplendi!\n💘 **Aşk Seviyesi:** %${askYuzdesi}\n💬 *"${soz}"*`);
         }
     }
 
@@ -186,14 +265,14 @@ client.on('messageCreate', async (message) => {
     if (command === 'komutlar') {
         const helpEmbed = new EmbedBuilder().setTitle('🛡️ MEM Bot Komut Paneli').setColor('Blue').addFields(
             { name: '👤 Genel', value: '`afk`, `owner`, `avatar`, `komutlar`, `ship`' },
-            { name: '🛡️ Moderasyon', value: '`ban`, `kick`, `mute`, `unmute`, `uyarı`, `sil`, `lock`, `unlock`, `yetkilisec`' },
+            { name: '🛡️ Moderasyon', value: '`ban`, `kick`, `mute`, `unmute`, `uyarı`, `sil`, `lock`, `unlock`, `yetkilisec`, `duyuru`, `kurallar`, `linkengel-on`, `linkengel-off`, `yavaşmod`' },
             { name: '🎮 Oyun Ayar', value: '`sayısaymaca`' },
             { name: '🎫 Destek', value: '`/setup`' }
         );
         return message.reply({ embeds: [helpEmbed] });
     }
 
-    // --- MODERASYON KOMUT GÖVDELERİ ---
+    // --- ESKİ MODERASYON KOMUTLARI ---
     if (command === 'ban') {
         const user = message.mentions.users.first();
         const reason = args.slice(1).join(" ") || "Sebep belirtilmedi";
@@ -234,7 +313,7 @@ client.on('messageCreate', async (message) => {
         try {
             await member.timeout(null);
             return message.reply(`✅ **${member.user.tag}** kullanıcısının susturması kaldırıldı.`);
-        } catch (e) { return message.reply("❌ Susturma kaldırılamadı."); }
+        } catch (e) { return message.reply("❌ Susturma kaldırıldı."); }
     }
 
     if (command === 'sil') {
@@ -308,13 +387,12 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// --- 5. INTERACTION ETKİLEŞİMLERİ (TICKET PANEL AÇMA - KAPATMA MENÜSÜ) ---
+// --- 6. INTERACTION ETKİLEŞİMLERİ (TICKET PANEL İŞLEMLERİ) ---
 client.on('interactionCreate', async (i) => {
     if (!i.guild) return;
     const ayar = botVerisi.sunucuAyarlar[i.guild.id];
     if (!ayar) return;
 
-    // Menüden Kategori Seçip Profesyonel Ticket Kanalı Açma
     if (i.isStringSelectMenu() && i.customId === 'ticket_kategori') {
         botVerisi.ticketCount++; veriKaydet();
         const secilenKat = i.values[0];
@@ -322,7 +400,7 @@ client.on('interactionCreate', async (i) => {
         const channel = await i.guild.channels.create({
             name: `${secilenKat}-${i.user.username}`,
             type: ChannelType.GuildText,
-            topic: i.user.id, // Bilet açan kişinin ID'sini buraya gizliyoruz (Transcript için hayati)
+            topic: i.user.id, 
             permissionOverwrites: [
                 { id: i.guild.id, deny: [PermissionFlagsBits.ViewChannel] },
                 { id: i.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
@@ -339,10 +417,9 @@ client.on('interactionCreate', async (i) => {
         );
 
         await channel.send({ content: `${i.user} | ${ayar.yetkiliRoller.map(r => `<@&${r}>`).join(" ")}`, embeds: [welcomeEmbed], components: [closeBtn] });
-        return i.reply({ content: `✅ Biletiniz başarıyla oluşturuldu: ${channel}`, ephemeral: true });
+        return i.reply({ content: `✅ Biletiniz oluşturuldu: ${channel}`, ephemeral: true });
     }
 
-    // Kapat butonuna basıldığında Sebep Seçme Menüsünün gelmesi
     if (i.isButton() && i.customId === 'tk_kapat_menusu') {
         const reasonMenu = new ActionRowBuilder().addComponents(
             new StringSelectMenuBuilder()
@@ -355,16 +432,14 @@ client.on('interactionCreate', async (i) => {
                     { label: 'Vardiya Sonu Kapatıldı', value: 'Vardiya Sonu Kapanışı 🔒', emoji: '🔒' }
                 ])
         );
-        return i.reply({ content: "⚠️ Bu ticket kapatılacak. Lütfen sistem kaydı (Transcript) için geçerli bir kapatma sebebi seçin:", components: [reasonMenu] });
+        return i.reply({ content: "⚠️ Bu bilet kapatılacak. Lütfen transcript kaydı için bir sebep seçin:", components: [reasonMenu] });
     }
 
-    // Sebebe Basıldığında Log Atıp Kanalı Silen Final Bölümü
     if (i.isStringSelectMenu() && i.customId === 'tk_final_kapat') {
         const secilenSebep = i.values[0];
-        const acanKisiId = i.channel.topic; // Topic'e sakladığımız id'yi geri okuyoruz
+        const acanKisiId = i.channel.topic; 
         const logKanal = i.guild.channels.cache.get(ayar.logKanal);
 
-        // Mesajları çekip txt dosyasına dökme işlemi
         const messages = await i.channel.messages.fetch({ limit: 100 });
         const logString = messages.reverse().map(m => `[${m.createdAt.toLocaleString()}] ${m.author.tag}: ${m.content}`).join('\n');
         const attachment = new AttachmentBuilder(Buffer.from(logString), { name: `transcript-${i.channel.name}.txt` });
