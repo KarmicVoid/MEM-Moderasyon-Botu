@@ -92,7 +92,7 @@ client.on('messageCreate', async (message) => {
             const pLog = q3.first().mentions.channels.first();
             if (!pLog) return message.reply("❌ Log kanalı etiketlemedin, iptal edildi.");
 
-            botVerisi.sunucuAyarlar[message.guild.id] = { panelKanal: pKanal.id, yetkiliRoller: pRoller, logKanal: pLog.id };
+            botVerisi.sunucuAyarlar[message.guild.id] = { ...botVerisi.sunucuAyarlar[message.guild.id], panelKanal: pKanal.id, yetkiliRoller: pRoller, logKanal: pLog.id };
             veriKaydet();
 
             const panelEmbed = new EmbedBuilder()
@@ -123,14 +123,38 @@ client.on('messageCreate', async (message) => {
     const args = message.content.slice(prefix.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    // Yeni komutları listeye ekledik
-    const tumKomutlar = ['komutlar', 'afk', 'owner', 'avatar', 'mute', 'unmute', 'ban', 'kick', 'sil', 'lock', 'unlock', 'uyarı', 'rolver', 'rolal', 'yetkilisec', 'sayısaymaca', 'ship', 'duyuru', 'kurallar', 'linkengel-on', 'linkengel-off', 'yavaşmod'];
+    // Yeni giriş ve çıkış komutları listeye eklendi
+    const tumKomutlar = ['komutlar', 'afk', 'owner', 'avatar', 'mute', 'unmute', 'ban', 'kick', 'sil', 'lock', 'unlock', 'uyarı', 'rolver', 'rolal', 'yetkilisec', 'sayısaymaca', 'ship', 'duyuru', 'kurallar', 'linkengel-on', 'linkengel-off', 'yavaşmod', 'hoşgeldin', 'hoşçakal'];
     if (!tumKomutlar.includes(command)) return message.reply(`❌ \`${prefix}${command}\` komutu bulunamadı.`);
 
     // Genel yetkisiz komutlar listesi
     const genelKomutlar = ['ship', 'komutlar', 'afk', 'avatar', 'owner'];
     if (!genelKomutlar.includes(command) && !canUse) {
         return message.reply("❌ Bu komutu kullanmak için yetkiniz bulunmuyor.");
+    }
+
+    // --- YENİ: HOŞGELDİN KANAL AYARLAMA KOMUTU ---
+    if (command === 'hoşgeldin') {
+        const hedefKanal = message.mentions.channels.first();
+        if (!hedefKanal) return message.reply(`❌ Yanlış Kullanım! Örnek: \`${prefix}hoşgeldin #kanal\``);
+
+        if (!botVerisi.sunucuAyarlar[message.guild.id]) botVerisi.sunucuAyarlar[message.guild.id] = {};
+        botVerisi.sunucuAyarlar[message.guild.id].hgKanal = hedefKanal.id;
+        veriKaydet();
+
+        return message.reply(`✅ Hoş geldin mesajlarının gönderileceği kanal ${hedefKanal} olarak ayarlandı.`);
+    }
+
+    // --- YENİ: HOŞÇAKAL KANAL AYARLAMA KOMUTU ---
+    if (command === 'hoşçakal') {
+        const hedefKanal = message.mentions.channels.first();
+        if (!hedefKanal) return message.reply(`❌ Yanlış Kullanım! Örnek: \`${prefix}hoşçakal #kanal\``);
+
+        if (!botVerisi.sunucuAyarlar[message.guild.id]) botVerisi.sunucuAyarlar[message.guild.id] = {};
+        botVerisi.sunucuAyarlar[message.guild.id].hkKanal = hedefKanal.id;
+        veriKaydet();
+
+        return message.reply(`✅ Hoşçakal mesajlarının gönderileceği kanal ${hedefKanal} olarak ayarlandı.`);
     }
 
     // --- YENİ: DUYURU KOMUTU ---
@@ -157,7 +181,7 @@ client.on('messageCreate', async (message) => {
             .setDescription("Sunucumuzun düzenini korumak amacıyla lütfen aşağıda belirtilen kurallara hassasiyet gösteriniz:")
             .setColor("Red")
             .addFields(
-                { name: "⚖️ 1. Saygı ve Hoşgörü", value: "Sunucu içerisindeki tüm üyelere ve yetkililere saygılı olmak zorunludur. Küfür, hakaret ve argo kesinlikle yasaktır." },
+                { name: "⚖️ 1. Saygı ve Hoşgörü", value: "Sunucu içerisindeki tüm üyelere ve yetkililere saygılı olmak zorunludur. Küfür, hakaret and argo kesinlikle yasaktır." },
                 { name: "🚫 2. Reklam ve Spam", value: "Kanallarda veya üyelerin DM kutularında reklam yapmak, spam veya flood yapmak yasaktır." },
                 { name: "👤 3. Profil ve İsim Düzeni", value: "Siyasi, dini, uygunsuz veya saldırgan profil resimleri, durum mesajları ve kullanıcı adları kullanılamaz." },
                 { name: "⚖️ 4. Kişisel Haklar", value: "Din, dil, ırk, mezhep veya cinsiyet ayrımcılığı yapmak, kişilerin özel hayatını (ifşa vb.) paylaşmak kesinlikle kalıcı yasaklanma sebebidir." },
@@ -461,6 +485,28 @@ client.on('interactionCreate', async (i) => {
         await i.reply("🔒 Kapatma sebebi onaylandı. Bilet kanalı 5 saniye içinde tamamen yok ediliyor...");
         return setTimeout(() => i.channel.delete().catch(() => {}), 5000);
     }
+});
+
+// --- ÜYE GİRİŞ TETİKLEYİCİSİ ---
+client.on('guildMemberAdd', async (member) => {
+    const ayar = botVerisi.sunucuAyarlar[member.guild.id];
+    if (!ayar || !ayar.hgKanal) return;
+
+    const hgKanal = member.guild.channels.cache.get(ayar.hgKanal);
+    if (!hgKanal) return;
+
+    await hgKanal.send({ content: `<@${member.id}> Sunucumuza hoş geldin! Senin sayende **${member.guild.memberCount}** Kişi olduk.` }).catch(() => {});
+});
+
+// --- ÜYE ÇIKIŞ TETİKLEYİCİSİ ---
+client.on('guildMemberRemove', async (member) => {
+    const ayar = botVerisi.sunucuAyarlar[member.guild.id];
+    if (!ayar || !ayar.hkKanal) return;
+
+    const hkKanal = member.guild.channels.cache.get(ayar.hkKanal);
+    if (!hkKanal) return;
+
+    await hkKanal.send({ content: `<@${member.id}> Tekrardan görüşmek üzere, yine bekleriz!` }).catch(() => {});
 });
 
 client.login(process.env.TOKEN);
