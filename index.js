@@ -133,7 +133,7 @@ client.on('messageCreate', async (message) => {
         return message.reply("❌ Bu komutu kullanmak için yetkiniz bulunmuyor.");
     }
 
-    // --- YENİ: HOŞGELDİN KANAL AYARLAMA KOMUTU ---
+    // --- HOŞGELDİN KANAL AYARLAMA KOMUTU ---
     if (command === 'hoşgeldin') {
         const hedefKanal = message.mentions.channels.first();
         if (!hedefKanal) return message.reply(`❌ Yanlış Kullanım! Örnek: \`${prefix}hoşgeldin #kanal\``);
@@ -145,7 +145,7 @@ client.on('messageCreate', async (message) => {
         return message.reply(`✅ Hoş geldin mesajlarının gönderileceği kanal ${hedefKanal} olarak ayarlandı.`);
     }
 
-    // --- YENİ: HOŞÇAKAL KANAL AYARLAMA KOMUTU ---
+    // --- HOŞÇAKAL KANAL AYARLAMA KOMUTU ---
     if (command === 'hoşçakal') {
         const hedefKanal = message.mentions.channels.first();
         if (!hedefKanal) return message.reply(`❌ Yanlış Kullanım! Örnek: \`${prefix}hoşçakal #kanal\``);
@@ -157,7 +157,7 @@ client.on('messageCreate', async (message) => {
         return message.reply(`✅ Hoşçakal mesajlarının gönderileceği kanal ${hedefKanal} olarak ayarlandı.`);
     }
 
-    // --- YENİ: DUYURU KOMUTU ---
+    // --- DUYURU KOMUTU ---
     if (command === 'duyuru') {
         const hedefKanal = message.mentions.channels.first();
         const duyuruMesaji = args.slice(1).join(" ");
@@ -166,7 +166,7 @@ client.on('messageCreate', async (message) => {
         const duyuruEmbed = new EmbedBuilder()
             .setTitle("📢 YENİ DUYURU")
             .setDescription(duyuruMesaji)
-            .setColor("Red") // İstediğin gibi kırmızı çizgi rengi
+            .setColor("Red")
             .setTimestamp()
             .setFooter({ text: `${message.guild.name} Yönetimi`, iconURL: message.guild.iconURL() });
 
@@ -174,14 +174,14 @@ client.on('messageCreate', async (message) => {
         return message.reply(`✅ Duyuru başarıyla ${hedefKanal} kanalında paylaşıldı.`);
     }
 
-    // --- YENİ: KURALLAR KOMUTU ---
+    // --- KURALLAR KOMUTU ---
     if (command === 'kurallar') {
         const kurallarEmbed = new EmbedBuilder()
             .setTitle(`📜 ${message.guild.name} Sunucu Kuralları`)
             .setDescription("Sunucumuzun düzenini korumak amacıyla lütfen aşağıda belirtilen kurallara hassasiyet gösteriniz:")
             .setColor("Red")
             .addFields(
-                { name: "⚖️ 1. Saygı ve Hoşgörü", value: "Sunucu içerisindeki tüm üyelere ve yetkililere saygılı olmak zorunludur. Küfür, hakaret and argo kesinlikle yasaktır." },
+                { name: "⚖️ 1. Saygı ve Hoşgörü", value: "Sunucu içerisindeki tüm üyelere ve yetkililere saygılı olmak zorunludur. Küfür, hakaret ve argo kesinlikle yasaktır." },
                 { name: "🚫 2. Reklam ve Spam", value: "Kanallarda veya üyelerin DM kutularında reklam yapmak, spam veya flood yapmak yasaktır." },
                 { name: "👤 3. Profil ve İsim Düzeni", value: "Siyasi, dini, uygunsuz veya saldırgan profil resimleri, durum mesajları ve kullanıcı adları kullanılamaz." },
                 { name: "⚖️ 4. Kişisel Haklar", value: "Din, dil, ırk, mezhep veya cinsiyet ayrımcılığı yapmak, kişilerin özel hayatını (ifşa vb.) paylaşmak kesinlikle kalıcı yasaklanma sebebidir." },
@@ -193,7 +193,7 @@ client.on('messageCreate', async (message) => {
         return message.channel.send({ content: "@everyone", embeds: [kurallarEmbed] });
     }
 
-    // --- YENİ: LINK ENGEL ON/OFF KOMUTLARI ---
+    // --- LINK ENGEL ON/OFF KOMUTLARI ---
     if (command === 'linkengel-on') {
         botVerisi.linkEngel[message.guild.id] = true;
         veriKaydet();
@@ -206,7 +206,7 @@ client.on('messageCreate', async (message) => {
         return message.reply("❌ **Link ve Dosya koruma sistemi KAPATILDI!** Artık herkes paylaşım yapabilir.");
     }
 
-    // --- YENİ: YAVAŞ MOD KOMUTU ---
+    // --- YAVAŞ MOD KOMUTU ---
     if (command === 'yavaşmod') {
         const sure = parseInt(args[0]);
         if (isNaN(sure) || sure < 0) return message.reply(`❌ Lütfen geçerli bir saniye girin! Örnek: \`${prefix}yavaşmod 5\` (Kapatmak için 0 yazın)`);
@@ -290,6 +290,7 @@ client.on('messageCreate', async (message) => {
         const helpEmbed = new EmbedBuilder().setTitle('🛡️ MEM Bot Komut Paneli').setColor('Blue').addFields(
             { name: '👤 Genel', value: '`afk`, `owner`, `avatar`, `komutlar`, `ship`' },
             { name: '🛡️ Moderasyon', value: '`ban`, `kick`, `mute`, `unmute`, `uyarı`, `sil`, `lock`, `unlock`, `yetkilisec`, `duyuru`, `kurallar`, `linkengel-on`, `linkengel-off`, `yavaşmod`' },
+            { name: '⚙️ Giriş-Çıkış Ayar', value: '`hoşgeldin`, `hoşçakal`' },
             { name: '🎮 Oyun Ayar', value: '`sayısaymaca`' },
             { name: '🎫 Destek', value: '`/setup`' }
         );
