@@ -14,13 +14,12 @@ const client = new Client({
         GatewayIntentBits.GuildMessages, 
         GatewayIntentBits.MessageContent, 
         GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildInvites // Davet takibi için bu şart!
+        GatewayIntentBits.GuildInvites
     ],
     partials: [Partials.Channel, Partials.Message, Partials.User]
 });
 
 const prefix = "mem!";
-// Veritabanı şemalarımız
 let botVerisi = { 
     uyarilar: {}, 
     ticketCount: 0, 
@@ -32,7 +31,9 @@ let botVerisi = {
     afk: {}, 
     linkEngel: {},
     cekilisler: {},
-    davetler: {} // Davet verilerini tutmak için
+    davetler: {}, 
+    modLogKanallari: {}, 
+    girisCikisKanallari: {} 
 };
 
 if (fs.existsSync('./database.json')) {
@@ -44,25 +45,38 @@ function veriKaydet() { fs.writeFileSync('./database.json', JSON.stringify(botVe
 const sunucuDavetleri = new Map();
 
 client.on('ready', async () => {
-    console.log(`${client.user.tag} | TÜM SİSTEMLER YENİ KOMUTLARLA AKTİF!`);
+    console.log(`${client.user.tag} | TÜM SİSTEMLER AKTİF!`);
     
-    // Bot açıldığında sunuculardaki mevcut davet linklerini hafızaya al
     for (const [guildId, guild] of client.guilds.cache) {
         try {
             const invites = await guild.invites.fetch();
             sunucuDavetleri.set(guild.id, new Map(invites.map(inv => [inv.code, inv.uses])));
         } catch (e) { console.log(`${guild.name} sunucusunda davet yetkim yok.`); }
     }
+
+    // Bot açıldığında veritabanındaki aktif çekilişlerin zamanlayıcılarını yeniden başlatır
+    if (botVerisi.cekilisler) {
+        for (const msgId in botVerisi.cekilisler) {
+            const cekilis = botVerisi.cekilisler[msgId];
+            if (!cekilis.bitti) {
+                const kalanSure = cekilis.bitisTimestamp - Date.now();
+                if (kalanSure <= 0) {
+                    cekilisBitir(msgId);
+                } else {
+                    setTimeout(() => { cekilisBitir(msgId); }, kalanSure);
+                }
+            }
+        }
+    }
 });
 
-// Yeni bir davet oluşturulduğunda hafızayı güncelle
 client.on('inviteCreate', invite => {
     const amap = sunucuDavetleri.get(invite.guild.id) || new Map();
     amap.set(invite.code, invite.uses);
     sunucuDavetleri.set(invite.guild.id, amap);
 });
 
-// Sunucuya biri girdiğinde kimin davetiyle geldiğini bul
+// --- HOŞ GELDİN SİSTEMİ ---
 client.on('guildMemberAdd', async (member) => {
     try {
         const eskiDavetler = sunucuDavetleri.get(member.guild.id);
@@ -77,6 +91,8 @@ client.on('guildMemberAdd', async (member) => {
                 break;
             }
         }
+
+        let davetMetni = "Bilinmiyor ❌";
 
         if (davetEden) {
             if (!botVerisi.davetler[member.guild.id]) botVerisi.davetler[member.guild.id] = {};
@@ -97,48 +113,165 @@ client.on('guildMemberAdd', async (member) => {
             }
             dVeri.sayi++;
             veriKaydet();
+            davetMetni = `${davetEden} (**${dVeri.sayi}** davet)`;
         }
-    } catch (e) { console.log(e); }
-});
 
-// Sunucudan biri çıktığında listeyi güncelle
-client.on('guildMemberRemove', async (member) => {
-    try {
-        const gId = member.guild.id;
-        if (!botVerisi.davetler[gId]) return;
-
-        for (const davetciId in botVerisi.davetler[gId]) {
-            let dVeri = botVerisi.davetler[gId][davetciId];
-            if (dVeri.girenler.includes(member.user.tag)) {
-                dVeri.girenler = dVeri.girenler.filter(u => u !== member.user.tag);
-                if (!dVeri.cikanlar.includes(member.user.tag)) dVeri.cikanlar.push(member.user.tag);
-                dVeri.sayi = Math.max(0, dVeri.sayi - 1);
-                veriKaydet();
-                break;
+        const hgKanalId = botVerisi.girisCikisKanallari[member.guild.id];
+        if (hgKanalId) {
+            const hgKanal = member.guild.channels.cache.get(hgKanalId);
+            if (hgKanal) {
+                const hgEmbed = new EmbedBuilder()
+                    .setTitle("📥 Aramıza Yeni Biri Katıldı!")
+                    .setDescription(`Hoş geldin ${member}! Seninle birlikte **${member.guild.memberCount}** kişi olduk.\n\n👤 Davet Eden: ${davetMetni}`)
+                    .setColor("Green")
+                    .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+                    .setTimestamp();
+                hgKanal.send({ embeds: [hgEmbed] });
             }
         }
     } catch (e) { console.log(e); }
 });
 
+// --- HOŞ ÇAKAL SİSTEMİ ---
+client.on('guildMemberRemove', async (member) => {
+    try {
+        const gId = member.guild.id;
+        if (botVerisi.davetler[gId]) {
+            for (const davetciId in botVerisi.davetler[gId]) {
+                let dVeri = botVerisi.davetler[gId][davetciId];
+                if (dVeri.girenler.includes(member.user.tag)) {
+                    dVeri.girenler = dVeri.girenler.filter(u => u !== member.user.tag);
+                    if (!dVeri.cikanlar.includes(member.user.tag)) dVeri.cikanlar.push(member.user.tag);
+                    dVeri.sayi = Math.max(0, dVeri.sayi - 1);
+                    veriKaydet();
+                    break;
+                }
+            }
+        }
+
+        const hcKanalId = botVerisi.girisCikisKanallari[gId];
+        if (hcKanalId) {
+            const hcKanal = member.guild.channels.cache.get(hcKanalId);
+            if (hcKanal) {
+                const hcEmbed = new EmbedBuilder()
+                    .setTitle("📤 Bir Üye Aramızdan Ayrıldı")
+                    .setDescription(`Görüşmek üzere **${member.user.tag}**! Sunucumuz artık **${member.guild.memberCount}** kişi.`)
+                    .setColor("Red")
+                    .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+                    .setTimestamp();
+                hcKanal.send({ embeds: [hcEmbed] });
+            }
+        }
+    } catch (e) { console.log(e); }
+});
+
+// --- MODERN LOG MOTORU ---
+client.on('messageDelete', async (message) => {
+    if (!message.guild || message.author?.bot) return;
+    const logKanalId = botVerisi.modLogKanallari[message.guild.id];
+    if (!logKanalId) return;
+    const logKanal = message.guild.channels.cache.get(logKanalId);
+    if (!logKanal) return;
+
+    const embed = new EmbedBuilder()
+        .setTitle("🗑️ Mesaj Silindi")
+        .setColor("Red")
+        .addFields(
+            { name: "Yazan Kullanıcı", value: `${message.author} (${message.author.id})` },
+            { name: "Kanal", value: `${message.channel}` },
+            { name: "Silinen İçerik", value: message.content || "_İçerik tespit edilemedi (Fotoğraf/Ek olabilir)_" }
+        )
+        .setTimestamp();
+    logKanal.send({ embeds: [embed] }).catch(() => {});
+});
+
+client.on('messageUpdate', async (oldMessage, newMessage) => {
+    if (!oldMessage.guild || oldMessage.author?.bot || oldMessage.content === newMessage.content) return;
+    const logKanalId = botVerisi.modLogKanallari[oldMessage.guild.id];
+    if (!logKanalId) return;
+    const logKanal = oldMessage.guild.channels.cache.get(logKanalId);
+    if (!logKanal) return;
+
+    const embed = new EmbedBuilder()
+        .setTitle("📝 Mesaj Düzenlendi")
+        .setColor("Orange")
+        .addFields(
+            { name: "Yazan Kullanıcı", value: `${oldMessage.author}` },
+            { name: "Kanal", value: `${oldMessage.channel}` },
+            { name: "Eski Mesaj", value: oldMessage.content || "_Boş_" },
+            { name: "Yeni Mesaj", value: newMessage.content || "_Boş_" }
+        )
+        .setTimestamp();
+    logKanal.send({ embeds: [embed] }).catch(() => {});
+});
+
+// --- ÇEKİLİŞ SONUÇLANDIRMA FONKSİYONU ---
+async function cekilisBitir(mesajId) {
+    const cekilis = botVerisi.cekilisler?.[mesajId];
+    if (!cekilis || cekilis.bitti) return;
+
+    cekilis.bitti = true;
+    veriKaydet();
+
+    const kanal = client.channels.cache.get(cekilis.kanalId);
+    if (!kanal) return;
+
+    try {
+        const mesaj = await kanal.messages.fetch(mesajId);
+        
+        // Butonu devre dışı bırak
+        const kapaliButon = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('cekilis_katil_bitti').setEmoji('🎉').setStyle(ButtonStyle.Primary).setDisabled(true)
+        );
+
+        if (cekilis.katilanlar.length === 0) {
+            const iptalEmbed = EmbedBuilder.from(mesaj.embeds[0])
+                .setColor("Grey")
+                .setTitle("❌ ÇEKİLİŞ SONUÇLANDI (Katılım Yetersiz)")
+                .setDescription("Çekilişe hiç katılan olmadığı için kazanan seçilemedi.");
+            await mesaj.edit({ embeds: [iptalEmbed], components: [kapaliButon] });
+            return kanal.send(`⚠️ **${cekilis.odul}** çekilişine katılan olmadığı için kazanan seçilemedi! Başlatan: <@${cekilis.baslatan}>`);
+        }
+
+        // Rastgele kazananları karıştırıp seçme işlemi
+        const kazanacaklar = [];
+        const katilanKopyasi = [...cekilis.katilanlar];
+        const cekilecekKisiSayisi = Math.min(cekilis.kazananSayisi, katilanKopyasi.length);
+
+        for (let i = 0; i < cekilecekKisiSayisi; i++) {
+            const randIndex = Math.floor(Math.random() * katilanKopyasi.length);
+            kazanacaklar.push(katilanKopyasi.splice(randIndex, 1)[0]);
+        }
+
+        const etiketlenenKazananlar = kazanacaklar.map(id => `<@${id}>`).join(', ');
+
+        const bitisEmbed = EmbedBuilder.from(mesaj.embeds[0])
+            .setColor("Green")
+            .setTitle("🎉 ÇEKİLİŞ SONUÇLANDI 🎉")
+            .addFields({ name: "🏆 Kazanan(lar):", value: etiketlenenKazananlar });
+
+        await mesaj.edit({ embeds: [bitisEmbed], components: [kapaliButon] });
+
+        // Kazananı tebrik eden ve başlatanı etiketleyen mesaj
+        return kanal.send(`🥳 **Tebrikler!** ${etiketlenenKazananlar} çekilişi kazandınız!\n🎁 Ödülünüz: **${cekilis.odul}**\n👑 Çekilişi Başlatan: <@${cekilis.baslatan}>`);
+
+    } catch (e) { console.log("Çekiliş bitirme hatası:", e); }
+}
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
-    // Yetki Kontrol Fonksiyonu (Yöneticiler veya bot yetkilileri)
     const canUse = message.member.permissions.has(PermissionFlagsBits.Administrator) || botVerisi.yetkiliRoller.some(r => message.member.roles.cache.has(r));
 
-    // --- LINK VE DOSYA ENGEL SİSTEMİ ---
     if (botVerisi.linkEngel?.[message.guild.id] && !canUse) {
         const linkRegex = /(https?:\/\/[^\s]+)/g;
         const discordInviteRegex = /(discord\.(gg|io|me|li)\/[^\s]+)/g;
-        
         if (linkRegex.test(message.content) || discordInviteRegex.test(message.content) || message.attachments.size > 0) {
             await message.delete().catch(() => {});
-            return message.channel.send(`⚠️ ${message.author}, bu sunucuda link, davet bağlantısı veya dosya paylaşımı yapmak yasaktır!`).then(m => setTimeout(() => m.delete(), 3000));
+            return message.channel.send(`⚠️ ${message.author}, bu sunucuda link veya dosya paylaşımı yasaktır!`).then(m => setTimeout(() => m.delete(), 3000));
         }
     }
 
-    // --- KORUMALI OYUN MOTORLARI ---
     if (botVerisi.sayi[message.channel.id]) {
         const d = botVerisi.sayi[message.channel.id];
         const n = parseInt(message.content);
@@ -156,7 +289,6 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // --- AFK SİSTEMİ ---
     if (message.mentions.users.size > 0) {
         message.mentions.users.forEach(user => {
             if (botVerisi.afk?.[user.id]) message.channel.send(`📌 **${user.username}** AFK! Sebep: **${botVerisi.afk[user.id]}**`);
@@ -167,10 +299,8 @@ client.on('messageCreate', async (message) => {
         message.channel.send(`👋 Hoş geldin **${message.author.username}**, AFK modun kapatıldı.`);
     }
 
-    // --- /SETUP TICKET KURULUM KOMUTU ---
     if (message.content === '/setup') {
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return message.reply("❌ Bu kurulumu sadece yöneticiler yapabilir.");
-
         const filter = m => m.author.id === message.author.id;
         try {
             await message.reply("1️⃣ **Ticket panelinin kurulacağı kanalı etiketle (#kanal):**");
@@ -214,31 +344,59 @@ client.on('messageCreate', async (message) => {
         } catch (e) { return message.reply("❌ Zaman aşımı veya kurulum hatası oluştu."); }
     }
 
-    // --- PREFIX'Lİ KOMUT KONTROLÜ ---
     if (!message.content.startsWith(prefix)) return;
     const args = message.content.slice(prefix.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    const tumKomutlar = ['komutlar', 'afk', 'owner', 'avatar', 'mute', 'unmute', 'ban', 'kick', 'sil', 'lock', 'unlock', 'uyarı', 'rolver', 'rolal', 'yetkilisec', 'sayısaymaca', 'ship', 'duyuru', 'kurallar', 'linkengel-on', 'linkengel-off', 'yavaşmod', 'çekiliş', 'invitesay'];
+    const tumKomutlar = ['komutlar', 'afk', 'owner', 'avatar', 'mute', 'unmute', 'ban', 'kick', 'sil', 'lock', 'unlock', 'uyarı', 'rolver', 'rolal', 'yetkilisec', 'sayısaymaca', 'ship', 'duyuru', 'kurallar', 'linkengel-on', 'linkengel-off', 'yavaşmod', 'çekiliş', 'invitesay', 'tuttututmadı', 'logs', 'hoşgeldin', 'hoşçakal'];
     if (!tumKomutlar.includes(command)) return message.reply(`❌ \`${prefix}${command}\` komutu bulunamadı.`);
 
-    // Genel Üye Komutları Yetki Filtresi
-    const genelKomutlar = ['ship', 'komutlar', 'afk', 'avatar', 'owner'];
+    const genelKomutlar = ['ship', 'komutlar', 'afk', 'avatar', 'owner', 'tuttututmadı'];
     if (!genelKomutlar.includes(command) && !canUse) {
         return message.reply("❌ Bu komutu kullanmak için yetkiniz (Yönetici veya Yetkili Rol) bulunmuyor.");
     }
 
-    // --- YENİ KOMUT: INVITESAY (YETKİLİLERE ÖZEL) ---
+    if (command === 'tuttututmadı') {
+        const tahmin = args.join(" ");
+        if (!tahmin) return message.reply(`❌ Yanlış Kullanım! Örnek: \`${prefix}tuttututmadı Alttaki üye kod yazmayı biliyor.\``);
+        const secenekler = ["🟢 TUTTU!", "🔴 TUTMADI!"];
+        const sonuc = secenekler[Math.floor(Math.random() * secenekler.length)];
+        const tuttuEmbed = new EmbedBuilder()
+            .setTitle("🎮 Tuttu mu? Tutmadı mı?")
+            .setDescription(`**${message.author.username}** dedi ki:\n"${tahmin}"\n\n**Cevap:** ${sonuc}`)
+            .setColor(sonuc.includes("TUTTU") ? "Green" : "Red")
+            .setTimestamp();
+        return message.reply({ embeds: [tuttuEmbed] });
+    }
+
+    if (command === 'logs') {
+        const hedefKanal = message.mentions.channels.first() || message.channel;
+        botVerisi.modLogKanallari[message.guild.id] = hedefKanal.id;
+        veriKaydet();
+        return message.reply(`✅ Moderasyon log kanalı başarıyla ${hedefKanal} olarak ayarlandı.`);
+    }
+
+    if (command === 'hoşgeldin') {
+        const hedefKanal = message.mentions.channels.first() || message.channel;
+        botVerisi.girisCikisKanallari[message.guild.id] = hedefKanal.id;
+        veriKaydet();
+        return message.reply(`✅ Hoş geldin (Giriş) kanalı başarıyla ${hedefKanal} olarak ayarlandı.`);
+    }
+
+    if (command === 'hoşçakal') {
+        const hedefKanal = message.mentions.channels.first() || message.channel;
+        botVerisi.girisCikisKanallari[message.guild.id] = hedefKanal.id;
+        veriKaydet();
+        return message.reply(`✅ Hoş çakal (Çıkış) kanalı başarıyla ${hedefKanal} olarak ayarlandı.`);
+    }
+
     if (command === 'invitesay') {
         const hedefKullanici = message.mentions.users.first() || message.author;
         const gId = message.guild.id;
-
         if (!botVerisi.davetler[gId] || !botVerisi.davetler[gId][hedefKullanici.id]) {
             return message.reply(`📊 **${hedefKullanici.username}** kullanıcısının bu sunucuda henüz kayıtlı bir davet verisi bulunmuyor.`);
         }
-
         const dVeri = botVerisi.davetler[gId][hedefKullanici.id];
-        
         const davetEmbed = new EmbedBuilder()
             .setTitle(`📊 Davet İstatistikleri: ${hedefKullanici.username}`)
             .setColor("Green")
@@ -246,34 +404,22 @@ client.on('messageCreate', async (message) => {
             .addFields(
                 { name: "✨ Toplam Aktif Davet Sayısı", value: `**${dVeri.sayi}** kişi` },
                 { name: "📥 Sunucuya Getirdikleri", value: dVeri.girenler.length > 0 ? dVeri.girenler.map(u => `\`${u}\``).join(', ') : "_Kimse yok_" },
-                { name: "📤 Sunucudan Çıkanlar", value: dVeri.cikanlar.length > 0 ? dVeri.cikanlar.map(u => `\`${u}\``).join(', ') : "_Kimse yok_" },
-                { name: "🔄 Çıkıp Tekrar Girenler", value: dVeri.tekrarGirenler.length > 0 ? dVeri.tekrarGirenler.map(u => `\`${u}\``).join(', ') : "_Kimse yok_" }
+                { name: "📤 Sunucudan Çıkanlar", value: dVeri.cikanlar.length > 0 ? dVeri.cikanlar.map(u => `\`${u}\``).join(', ') : "_Kimse yok_" }
             )
             .setTimestamp();
-
         return message.reply({ embeds: [davetEmbed] });
     }
 
-    // --- YENİ KOMUT: ÇEKİLİŞ (YETKİLİLERE ÖZEL) ---
+    // --- YENİLİKÇİ SÜRELİ ÇEKİLİŞ KOMUTU ---
     if (command === 'çekiliş') {
         const filter = m => m.author.id === message.author.id;
-
-        const zamanKontrol = (str) => {
-            if (str.startsWith('.') || str.length < 3) return false;
-            if (str.toLowerCase().startsWith('bugün') || str.toLowerCase().startsWith('yarın')) return true;
-            return false;
-        };
-
         try {
-            await message.reply("1️⃣ **Çekiliş başlangıç zamanı nedir?** *(Cümle 'Bugün' veya 'Yarın' ile başlamalıdır! Örnek: Bugün 13:00)*");
+            await message.reply("1️⃣ **Çekiliş kaç saniye sürsün?** *(Lütfen sadece sayı yazın, Örn: 60)*");
             const q1 = await message.channel.awaitMessages({ filter, max: 1, time: 30000 });
-            const baslangic = q1.first().content;
-            if (!zamanKontrol(baslangic)) return message.reply("❌ Hatalı giriş! Zaman cümlesi 'Bugün' veya 'Yarın' ile başlamalıdır. İşlem iptal edildi.");
+            const saniye = parseInt(q1.first().content);
+            if (isNaN(saniye) || saniye <= 0) return message.reply("❌ Geçersiz süre girdiniz, işlem iptal edildi.");
 
-            await message.reply("2️⃣ **Çekiliş bitiş zamanı nedir?** *(Cümle 'Bugün' veya 'Yarın' ile başlamalıdır! Örnek: Yarın 18:00)*");
-            const q2 = await message.channel.awaitMessages({ filter, max: 1, time: 30000 });
-            const bitis = q2.first().content;
-            if (!zamanKontrol(bitis)) return message.reply("❌ Hatalı giriş! Zaman cümlesi 'Bugün' veya 'Yarın' ile başlamalıdır. İşlem iptal edildi.");
+            const bitisTimestamp = Date.now() + (saniye * 1000);
 
             const sartEmbed = new EmbedBuilder()
                 .setTitle("🎯 Çekiliş Katılım Şartı")
@@ -287,75 +433,56 @@ client.on('messageCreate', async (message) => {
             );
 
             const sartMesaj = await message.reply({ embeds: [sartEmbed], components: [sartButonlar] });
+            const butonEtkilesim = await sartMesaj.awaitMessageComponent({ filter: i => i.user.id === message.author.id, time: 30000 });
 
-            const butonEtkilesim = await sartMesaj.awaitMessageComponent({ 
-                filter: i => i.user.id === message.author.id, 
-                time: 30000 
-            });
-
-            let sartTuru = 'yok';
-            let sartDetay = 'Herkes Katılabilir';
+            let sartTuru = 'yok', sartDetay = 'Herkes Katılabilir';
 
             if (butonEtkilesim.customId === 'sart_invite') {
                 sartTuru = 'invite';
                 const modal = new ModalBuilder().setCustomId('modal_invite').setTitle('İnvite Şartı Girişi');
-                const inviteInput = new TextInputBuilder()
-                    .setCustomId('invite_count')
-                    .setLabel('Kullanıcıların kaç invite yapması lazım?')
-                    .setStyle(TextInputStyle.Short)
-                    .setPlaceholder('Örn: 3')
-                    .setRequired(true);
+                const inviteInput = new TextInputBuilder().setCustomId('invite_count').setLabel('Gereken davet sayısı?').setStyle(TextInputStyle.Short).setRequired(true);
                 modal.addComponents(new ActionRowBuilder().addComponents(inviteInput));
-                
                 await butonEtkilesim.showModal(modal);
                 const modalSubmit = await butonEtkilesim.awaitModalSubmit({ time: 30000 });
                 sartDetay = modalSubmit.fields.getTextInputValue('invite_count');
-                await modalSubmit.reply({ content: `✅ İnvite şartı **${sartDetay}** olarak kaydedildi. Lütfen sohbete geri dönün.`, ephemeral: true });
+                await modalSubmit.reply({ content: `✅ İnvite şartı kaydedildi.`, ephemeral: true });
             } 
             else if (butonEtkilesim.customId === 'sart_rol') {
                 sartTuru = 'rol';
                 const modal = new ModalBuilder().setCustomId('modal_rol').setTitle('Rol Şartı Girişi');
-                const rolInput = new TextInputBuilder()
-                    .setCustomId('rol_id')
-                    .setLabel('Hangi role sahip olması lazım? (Rol ID girin)')
-                    .setStyle(TextInputStyle.Short)
-                    .setPlaceholder('Rolün ID numarasını yapıştırın')
-                    .setRequired(true);
+                const rolInput = new TextInputBuilder().setCustomId('rol_id').setLabel('Rol ID girin:').setStyle(TextInputStyle.Short).setRequired(true);
                 modal.addComponents(new ActionRowBuilder().addComponents(rolInput));
-                
                 await butonEtkilesim.showModal(modal);
                 const modalSubmit = await butonEtkilesim.awaitModalSubmit({ time: 30000 });
                 sartDetay = modalSubmit.fields.getTextInputValue('rol_id');
-                await modalSubmit.reply({ content: `✅ Rol şartı kaydedildi. Lütfen sohbete geri dönün.`, ephemeral: true });
+                await modalSubmit.reply({ content: `✅ Rol şartı kaydedildi.`, ephemeral: true });
             } 
             else {
                 await butonEtkilesim.reply({ content: "✅ Şartsız olarak devam ediliyor.", ephemeral: true });
             }
 
-            await message.channel.send("4️⃣ **Çekiliş ödülü nedir?**");
+            await message.channel.send("3️⃣ **Çekiliş ödülü nedir?**");
             const q4 = await message.channel.awaitMessages({ filter, max: 1, time: 30000 });
             const odul = q4.first().content;
 
-            await message.channel.send("5️⃣ **Çekilişi kaç kişi kazanabilir?** *(Sadece sayı yazın)*");
+            await message.channel.send("4️⃣ **Çekilişi kaç kişi kazanabilir?** *(Örn: 1)*");
             const q5 = await message.channel.awaitMessages({ filter, max: 1, time: 30000 });
             const kazananSayisi = parseInt(q5.first().content);
-            if (isNaN(kazananSayisi) || kazananSayisi <= 0) return message.channel.send("❌ Hatalı sayı girdiniz, çekiliş iptal edildi.");
+            if (isNaN(kazananSayisi) || kazananSayisi <= 0) return message.channel.send("❌ Hatalı sayı girdiniz.");
 
             let sartGosterim = sartTuru === 'invite' ? `📩 ${sartDetay} Davet Şartı` : (sartTuru === 'rol' ? `🛡️ <@&${sartDetay}> Rol Şartı` : "✨ Şart Yok");
 
             const cekilisEmbed = new EmbedBuilder()
                 .setTitle("🎉 DEV ÇEKİLİŞ BAŞLADI 🎉")
                 .setColor("Blue")
-                .setDescription(`Aşağıdaki mavi kutucuktaki 🎉 butonuna basarak çekilişe katılabilirsiniz!`)
+                .setDescription(`Aşağıdaki 🎉 butonuna basarak çekilişe katılabilirsiniz!\nSüre bitince kazanan otomatik açıklanacaktır.`)
                 .addFields(
                     { name: "🎁 Çekiliş Ödülü:", value: `**${odul}**` },
                     { name: "🎯 Çekilişe Katılım Şartı:", value: `${sartGosterim}` },
-                    { name: "📅 Çekilişin Başlayacağı Tarih:", value: `${baslangic}`, inline: true },
-                    { name: "⏰ Çekilişin Biteceği Tarih:", value: `${bitis}`, inline: true },
-                    { name: "👥 Çekilişi Kaç Kişi Kazanacak:", value: `**${kazananSayisi} Üye**` },
+                    { name: "⏰ Bitiş Zamanı:", value: `<t:${Math.floor(bitisTimestamp / 1000)}:R>` },
+                    { name: "👥 Kazanacak Kişi Sayısı:", value: `**${kazananSayisi} Üye**` },
                     { name: "👑 Çekilişi Başlatan:", value: `${message.author}` }
                 )
-                .setFooter({ text: "Bol şanslar!" })
                 .setTimestamp();
 
             const katilButon = new ActionRowBuilder().addComponents(
@@ -373,313 +500,216 @@ client.on('messageCreate', async (message) => {
                 sartTuru,
                 sartDetay,
                 baslatan: message.author.id,
+                bitisTimestamp,
+                bitti: false,
                 katilanlar: []
             };
             veriKaydet();
 
-            return message.channel.send("✅ Çekiliş başarıyla oluşturuldu ve yayına alındı!");
+            // Zamanlayıcıyı Başlat
+            setTimeout(() => {
+                cekilisBitir(msg.id);
+            }, saniye * 1000);
 
-        } catch (e) { console.log(e); return message.reply("❌ Zaman aşımı veya kurulum esnasında bir hata oluştu."); }
+            return message.channel.send("✅ Çekiliş başarıyla oluşturuldu ve zamanlayıcı başlatıldı!");
+
+        } catch (e) { console.log(e); return message.reply("❌ Kurulum esnasında zaman aşımı veya bir hata oluştu."); }
     }
 
-
-    // --- DUYURU KOMUTU ---
     if (command === 'duyuru') {
         const hedefKanal = message.mentions.channels.first();
         const duyuruMesaji = args.slice(1).join(" ");
-        if (!hedefKanal || !duyuruMesaji) return message.reply(`❌ Yanlış Kullanım! Örnek: \`${prefix}duyuru #kanal [Mesajınız]\``);
-
-        const duyuruEmbed = new EmbedBuilder()
-            .setTitle("📢 YENİ DUYURU")
-            .setDescription(duyuruMesaji)
-            .setColor("Red")
-            .setTimestamp()
-            .setFooter({ text: `${message.guild.name} Yönetimi`, iconURL: message.guild.iconURL() });
-
+        if (!hedefKanal || !duyuruMesaji) return message.reply(`❌ Yanlış Kullanım! Örnek: \`${prefix}duyuru #kanal [Mesaj]\``);
+        const duyuruEmbed = new EmbedBuilder().setTitle("📢 YENİ DUYURU").setDescription(duyuruMesaji).setColor("Red").setTimestamp();
         await hedefKanal.send({ embeds: [duyuruEmbed] });
-        return message.reply(`✅ Duyuru başarıyla ${hedefKanal} kanalında paylaşıldı.`);
+        return message.reply(`✅ Duyuru başarıyla gönderildi.`);
     }
 
-    // --- KURALLAR KOMUTU ---
     if (command === 'kurallar') {
         const kurallarEmbed = new EmbedBuilder()
             .setTitle(`📜 ${message.guild.name} Sunucu Kuralları`)
-            .setDescription("Sunucumuzun düzenini korumak amacıyla lütfen aşağıda belirtilen kurallara hassasiyet gösteriniz:")
+            .setDescription("Sunucu düzeni için lütfen kurallara uyunuz:")
             .setColor("Red")
             .addFields(
-                { name: "⚖️ 1. Saygı ve Hoşgörü", value: "Sunucu içerisindeki tüm üyelere ve yetkililere saygılı olmak zorunludur. Küfür, hakaret og argo kesinlikle yasaktır." },
-                { name: "🚫 2. Reklam ve Spam", value: "Kanallarda veya üyelerin DM kutularında reklam yapmak, spam veya flood yapmak yasaktır." },
-                { name: "👤 3. Profil ve İsim Düzeni", value: "Siyasi, dini, uygunsuz veya saldırgan profil resimleri, durum mesajları ve kullanıcı adları kullanılamaz." },
-                { name: "⚖️ 4. Kişisel Haklar", value: "Din, dil, ırk, mezhep veya cinsiyet ayrımcılığı yapmak, kişilerin özel hayatını (ifşa vb.) paylaşmak kesinlikle kalıcı yasaklanma sebebidir." },
-                { name: "📌 5. Kanal Amacı", value: "Her yazı ve görsel, kendi amacına uygun olarak açılmış doğru kanallarda paylaşılmalıdır." }
-            )
-            .setFooter({ text: "Sunucuya katılan tüm üyeler kuralları okumuş sayılır.", iconURL: message.guild.iconURL() })
-            .setTimestamp();
-
+                { name: "⚖️ 1. Saygı ve Hoşgörü", value: "Küfür, hakaret ve argo kesinlikle yasaktır." },
+                { name: "🚫 2. Reklam ve Spam", value: "Reklam yapmak, spam veya flood yapmak yasaktır." }
+            ).setTimestamp();
         return message.channel.send({ content: "@everyone", embeds: [kurallarEmbed] });
     }
 
-    // --- LINK ENGEL ON/OFF KOMUTLARI ---
     if (command === 'linkengel-on') {
-        botVerisi.linkEngel[message.guild.id] = true;
-        veriKaydet();
-        return message.reply("✅ **Link ve Dosya koruma sistemi başarıyla AKTİF edildi!** Yetkililer hariç link ve dosya paylaşımı engellendi.");
+        botVerisi.linkEngel[message.guild.id] = true; veriKaydet();
+        return message.reply("✅ Link koruma sistemi aktif edildi!");
     }
-
     if (command === 'linkengel-off') {
-        botVerisi.linkEngel[message.guild.id] = false;
-        veriKaydet();
-        return message.reply("❌ **Link ve Dosya koruma sistemi KAPATILDI!** Artık herkes paylaşım yapabilir.");
+        botVerisi.linkEngel[message.guild.id] = false; veriKaydet();
+        return message.reply("❌ Link koruma sistemi kapatıldı.");
     }
 
-    // --- YAVAŞ MOD KOMUTU ---
     if (command === 'yavaşmod') {
         const sure = parseInt(args[0]);
-        if (isNaN(sure) || sure < 0) return message.reply(`❌ Lütfen geçerli bir saniye girin! Örnek: \`${prefix}yavaşmod 5\` (Kapatmak için 0 yazın)`);
-
-        try {
-            await message.channel.setRateLimitPerUser(sure);
-            if (sure === 0) return message.reply("✨ Kanaldaki yavaş mod süresi tamamen kaldırıldı.");
-            return message.reply(`⏱️ Bu kanalın yavaş modu başarıyla **${sure} saniye** olarak ayarlandı.`);
-        } catch (e) { return message.reply("❌ Yavaş mod ayarlanırken bir hata oluştu, yetkilerimi kontrol edin."); }
+        if (isNaN(sure) || sure < 0) return message.reply("❌ Geçerli saniye girin.");
+        await message.channel.setRateLimitPerUser(sure);
+        return message.reply(`⏱️ Kanal yavaş modu **${sure} saniye** yapıldı.`);
     }
 
-    // --- SHIP KOMUTU ---
     if (command === 'ship') {
         const mList = await message.guild.members.fetch();
         const baskaUyeler = mList.filter(m => !m.user.bot && m.id !== message.author.id);
-        if (baskaUyeler.size === 0) return message.reply("❌ Sunucuda shiplenebilecek başka kimse yok!");
-
+        if (baskaUyeler.size === 0) return message.reply("❌ Shiplenecek kimse yok!");
         const shipKisi = baskaUyeler.random().user;
         const askYuzdesi = Math.floor(Math.random() * 101);
-
-        const sozler = [
-            "Bu aşk tarihe yazılır, mükemmel uyum! ❤️", "Fena değil, aranızda tatlı bir elektrik var. ✨",
-            "Biraz zor ama imkansız değil sanki? 🤔", "Gözlerinizden kalpler fışkırıyor resmen! 😍",
-            "Arkadaş kalsanız iki taraf için de daha hayırlı gibi... 🥶", "Kaderiniz birbirine yazılmış, net! 🕊️"
-        ];
-        let soz = askYuzdesi > 80 ? sozler[0] : (askYuzdesi > 60 ? sozler[3] : (askYuzdesi > 40 ? sozler[1] : (askYuzdesi > 20 ? sozler[2] : sozler[4])));
 
         const canvas = createCanvas(600, 250);
         const ctx = canvas.getContext('2d');
         ctx.fillStyle = '#232428'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-
         try {
-            const av1Url = message.author.displayAvatarURL({ forceStatic: true, extension: 'png', size: 128 });
-            const av2Url = shipKisi.displayAvatarURL({ forceStatic: true, extension: 'png', size: 128 });
-
-            const av1 = await loadImage(av1Url);
-            const av2 = await loadImage(av2Url);
-
-            ctx.save(); ctx.beginPath(); ctx.arc(100, 125, 60, 0, Math.PI * 2); ctx.closePath(); ctx.clip();
-            ctx.drawImage(av1, 40, 65, 120, 120); ctx.restore();
-
-            ctx.save(); ctx.beginPath(); ctx.arc(500, 125, 60, 0, Math.PI * 2); ctx.closePath(); ctx.clip();
-            ctx.drawImage(av2, 440, 65, 120, 120); ctx.restore();
-
-            ctx.fillStyle = '#4f545c'; ctx.fillRect(285, 50, 30, 120);
-            ctx.beginPath(); ctx.arc(300, 180, 25, 0, Math.PI * 2); ctx.fill();
-
-            const red = Math.floor((askYuzdesi / 100) * 255);
-            ctx.fillStyle = `rgb(${red}, 0, ${255 - red})`;
-            const doluluk = (askYuzdesi / 100) * 120;
-            ctx.fillRect(288, 170 - doluluk, 24, doluluk);
-            ctx.beginPath(); ctx.arc(300, 180, 20, 0, Math.PI * 2); ctx.fill();
-
-            ctx.fillStyle = '#ffffff'; ctx.font = 'bold 24px sans-serif'; ctx.textAlign = 'center';
-            ctx.fillText(`%${askYuzdesi}`, 300, 235);
-
+            const av1 = await loadImage(message.author.displayAvatarURL({ forceStatic: true, extension: 'png', size: 128 }));
+            const av2 = await loadImage(shipKisi.displayAvatarURL({ forceStatic: true, extension: 'png', size: 128 }));
+            ctx.drawImage(av1, 40, 65, 120, 120); ctx.drawImage(av2, 440, 65, 120, 120);
+            ctx.fillStyle = '#ffffff'; ctx.font = 'bold 24px sans-serif'; ctx.fillText(`%${askYuzdesi}`, 280, 130);
             const attachment = new AttachmentBuilder(await canvas.toBuffer(), { name: 'ship.png' });
-            return message.reply({ content: `💞 ${message.author} artık **${shipKisi}** ile shiplendi!\n💘 **Aşk Seviyesi:** %${askYuzdesi}\n💬 *"${soz}"*`, files: [attachment] });
+            return message.reply({ content: `💞 **${message.author.username}** ve **${shipKisi.username}** shiplendi! Uyumluluk: %${askYuzdesi}`, files: [attachment] });
         } catch (e) {
-            return message.reply(`💞 ${message.author} artık **${shipKisi}** ile shiplendi!\n💘 **Aşk Seviyesi:** %${askYuzdesi}\n💬 *"${soz}"*`);
+            return message.reply(`💞 **${message.author.username}** ve **${shipKisi.username}** shiplendi! Uyumluluk: %${askYuzdesi}`);
         }
     }
 
-    // --- KİLİT KOMUTLARI ---
     if (command === 'lock') {
-        try {
-            await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
-            return message.reply("🔒 Kanal yetkililer dışındakilere kilitlendi.");
-        } catch (e) { return message.reply("❌ Kanal kilitlenirken bir hata oluştu."); }
+        await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
+        return message.reply("🔒 Kanal kilitlendi.");
     }
-
     if (command === 'unlock') {
-        try {
-            await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: null });
-            return message.reply("🔓 Kanal kilidi başarıyla açıldı.");
-        } catch (e) { return message.reply("❌ Kanal kilidi açılırken bir hata oluştu."); }
+        await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: null });
+        return message.reply("🔓 Kanal açıldı.");
     }
 
-    // --- GÜNCELLENEN YARDIM MENÜSÜ (YENİ KOMUTLAR EKLENDİ) ---
     if (command === 'komutlar') {
         const helpEmbed = new EmbedBuilder().setTitle('🛡️ MEM Bot Komut Paneli').setColor('Blue').addFields(
-            { name: '👤 Genel', value: '`afk`, `owner`, `avatar`, `komutlar`, `ship`' },
-            { name: '🛡️ Moderasyon / Yönetim', value: '`ban`, `kick`, `mute`, `unmute`, `uyarı`, `sil`, `lock`, `unlock`, `yetkilisec`, `duyuru`, `kurallar`, `linkengel-on`, `linkengel-off`, `yavaşmod`, `çekiliş`, `invitesay`' },
-            { name: '🎮 Oyun Ayar', value: '`sayısaymaca`' },
+            { name: '👤 Genel / Eğlence', value: '`afk`, `owner`, `avatar`, `komutlar`, `ship`' },
+            { name: '🛡️ Moderasyon / Yönetim', value: '`ban`, `kick`, `mute`, `unmute`, `uyarı`, `sil`, `lock`, `unlock`, `yetkilisec`, `duyuru`, `kurallar`, `linkengel-on`, `linkengel-off`, `yavaşmod`, `çekiliş`, `invitesay`, `logs`, `hoşgeldin`, `hoşçakal`' },
+            { name: '🎮 Oyun / Eğlence', value: '`sayısaymaca`, `tuttututmadı`' },
             { name: '🎫 Destek', value: '`/setup`' }
         );
         return message.reply({ embeds: [helpEmbed] });
     }
 
-    // --- MODERASYON KOMUTLARI ---
     if (command === 'ban') {
         const user = message.mentions.users.first();
-        const reason = args.slice(1).join(" ") || "Sebep belirtilmedi";
-        if (!user) return message.reply("❌ Yasaklanacak üyeyi etiketleyin.");
-        try {
-            await user.send(`🚫 **${message.guild.name}** sunucusundan yasaklandınız. Sebep: ${reason}`).catch(() => {});
-            await message.guild.members.ban(user, { reason });
-            return message.reply(`✅ **${user.tag}** sunucudan başarıyla yasaklandı.`);
-        } catch (e) { return message.reply("❌ Bu üyeyi yasaklamak için yetkim yetmiyor."); }
+        if (!user) return message.reply("❌ Üye etiketleyin.");
+        await message.guild.members.ban(user);
+        return message.reply(`✅ Üye yasaklandı.`);
     }
-
     if (command === 'kick') {
         const member = message.mentions.members.first();
-        const reason = args.slice(1).join(" ") || "Sebep belirtilmedi";
-        if (!member) return message.reply("❌ Atılacak üyeyi etiketleyin.");
-        try {
-            await member.send(`🚪 **${message.guild.name}** sunucusundan atıldınız. Sebep: ${reason}`).catch(() => {});
-            await member.kick(reason);
-            return message.reply(`✅ **${member.user.tag}** sunucudan başarıyla atıldı.`);
-        } catch (e) { return message.reply("❌ Bu üyeyi atmak için yetkim yetmiyor."); }
+        if (!member) return message.reply("❌ Üye etiketleyin.");
+        await member.kick();
+        return message.reply(`✅ Üye atıldı.`);
     }
-
     if (command === 'mute') {
         const member = message.mentions.members.first();
         const sure = parseInt(args[1]);
-        const reason = args.slice(2).join(" ") || "Sebep belirtilmedi";
-        if (!member || isNaN(sure)) return message.reply("❌ Kullanım: `mem!mute @kişi [dakika] [sebep]`");
-        try {
-            await member.timeout(sure * 60 * 1000, reason);
-            await member.send(`🔇 **${message.guild.name}** sunucusunda ${sure} dakika susturuldunuz. Sebep: ${reason}`).catch(() => {});
-            return message.reply(`✅ **${member.user.tag}** ${sure} dakika boyunca susturuldu.`);
-        } catch (e) { return message.reply("❌ Susturma işlemi başarısız oldu, yetkilerimi kontrol edin."); }
+        if (!member || isNaN(sure)) return message.reply("❌ Hatalı kullanım.");
+        await member.timeout(sure * 60 * 1000);
+        return message.reply(`✅ Susturuldu.`);
     }
-
     if (command === 'unmute') {
         const member = message.mentions.members.first();
-        if (!member) return message.reply("❌ Susturması açılacak üyeyi etiketleyin.");
-        try {
-            await member.timeout(null);
-            return message.reply(`✅ **${member.user.tag}** kullanıcısının susturması kaldırıldı.`);
-        } catch (e) { return message.reply("❌ Susturma kaldırıldı."); }
+        if (!member) return message.reply("❌ Üye etiketleyin.");
+        await member.timeout(null);
+        return message.reply(`✅ Susturma kaldırıldı.`);
     }
-
     if (command === 'sil') {
         const sayi = parseInt(args[0]);
-        if (isNaN(sayi) || sayi < 1 || sayi > 100) return message.reply("❌ Lütfen 1-100 arasında silinecek mesaj sayısı girin.");
+        if (isNaN(sayi) || sayi < 1 || sayi > 100) return message.reply("❌ 1-100 arası sayı girin.");
         await message.channel.bulkDelete(sayi, true);
-        return message.channel.send(`✅ **${sayi}** adet mesaj temizlendi.`).then(m => setTimeout(() => m.delete(), 3000));
+        return message.channel.send(`✅ Temizlendi.`).then(m => setTimeout(() => m.delete(), 3000));
     }
-
     if (command === 'uyarı') {
         const member = message.mentions.members.first();
-        const sebep = args.slice(1).join(" ") || "Sebep belirtilmedi";
-        if (!member) return message.reply("❌ Lütfen birini etiketleyin.");
+        const sebep = args.slice(1).join(" ") || "Belirtilmedi";
+        if (!member) return message.reply("❌ Üye etiketleyin.");
         if (!botVerisi.uyarilar[member.id]) botVerisi.uyarilar[member.id] = [];
         botVerisi.uyarilar[member.id].push({ sebep, yetkili: message.author.tag });
-        const count = botVerisi.uyarilar[member.id].length;
         veriKaydet();
-        const emb = new EmbedBuilder().setTitle("⚠️ Uyarı Kaydı").setColor("Orange").addFields(
-            { name: "Kişi", value: member.user.tag, inline: true }, { name: "Sıra", value: `${count}. Uyarı`, inline: true }, { name: "Sebep", value: sebep }
-        );
-        await member.send({ embeds: [emb] }).catch(() => {});
-        return message.reply({ embeds: [emb] });
+        return message.reply(`⚠️ ${member.user.tag} uyarıldı. Toplam: ${botVerisi.uyarilar[member.id].length}`);
     }
-
     if (command === 'rolver') {
         const member = message.mentions.members.first();
-        const rolInput = args.slice(1).join(" ");
-        const role = message.mentions.roles.first() || message.guild.roles.cache.find(r => r.name === rolInput);
-        if (!member || !role) return message.reply("❌ Kullanım: `mem!rolver @kişi @rol`");
+        const role = message.mentions.roles.first();
+        if (!member || !role) return message.reply("❌ Eksik giriş.");
         await member.roles.add(role);
-        return message.reply(`✅ **${member.user.tag}** kişisine **${role.name}** rolü verildi.`);
+        return message.reply(`✅ Rol verildi.`);
     }
-
     if (command === 'rolal') {
         const member = message.mentions.members.first();
-        const rolInput = args.slice(1).join(" ");
-        const role = message.mentions.roles.first() || message.guild.roles.cache.find(r => r.name === rolInput);
-        if (!member || !role) return message.reply("❌ Kullanım: `mem!rolal @kişi @rol`");
+        const role = message.mentions.roles.first();
+        if (!member || !role) return message.reply("❌ Eksik giriş.");
         await member.roles.remove(role);
-        return message.reply(`✅ **${member.user.tag}** kişisinden **${role.name}** rolü geri alındı.`);
+        return message.reply(`✅ Rol alındı.`);
     }
-
     if (command === 'yetkilisec') {
         const role = message.mentions.roles.first();
-        if (!role) return message.reply("❌ Bir rol etiketlemelisiniz.");
+        if (!role) return message.reply("❌ Rol etiketleyin.");
         if (!botVerisi.yetkiliRoller.includes(role.id)) botVerisi.yetkiliRoller.push(role.id);
         veriKaydet();
-        return message.reply(`✅ **${role.name}** rolü bot yetkilisi olarak sisteme eklendi.`);
+        return message.reply(`✅ Bot yetkilisi eklendi.`);
     }
-
     if (command === 'sayısaymaca') {
         const kanal = message.mentions.channels.first() || message.channel;
         botVerisi.sayi[kanal.id] = { sonSayi: 0, sonKullanici: null };
         veriKaydet();
-        return message.reply(`✅ Sayı saymaca oyun kanalı ${kanal} olarak ayarlandı ve 1'den başlatıldı.`);
+        return message.reply(`✅ Sayı saymaca oyunu ${kanal} üzerinde başlatıldı.`);
     }
-
     if (command === 'afk') {
-        const sebep = args.join(" ") || "Belirtilmedi";
-        botVerisi.afk[message.author.id] = sebep; veriKaydet();
-        return message.reply(`📌 Başarıyla AFK moduna girdiniz. Sebep: **${sebep}**`);
+        botVerisi.afk[message.author.id] = args.join(" ") || "Belirtilmedi"; veriKaydet();
+        return message.reply(`📌 AFK moduna geçildi.`);
     }
-
     if (command === 'avatar') {
         const user = message.mentions.users.first() || message.author;
         return message.reply(`${user.displayAvatarURL({ dynamic: true, size: 1024 })}`);
     }
-
     if (command === 'owner') {
         return message.reply(`👑 Sunucu Sahibi: <@${message.guild.ownerId}>`);
     }
 });
 
-// --- INTERACTION ETKİLEŞİMLERİ (TICKET VE ÇEKİLİŞ BUTONLARI) ---
+// --- INTERACTION ETKİLEŞİMLERİ ---
 client.on('interactionCreate', async (i) => {
     if (!i.guild) return;
 
-    // --- ÇEKİLİŞE KATILMA BUTON MOTORU ---
     if (i.isButton() && i.customId === 'cekilis_katil') {
         const cVeri = botVerisi.cekilisler?.[i.message.id];
-        if (!cVeri) return i.reply({ content: "❌ Bu çekiliş veritabanında bulunamadı veya süresi doldu.", ephemeral: true });
+        if (!cVeri || cVeri.bitti) return i.reply({ content: "❌ Bu çekiliş tamamlanmış veya süresi dolmuş.", ephemeral: true });
 
         if (cVeri.katilanlar.includes(i.user.id)) {
             return i.reply({ content: "⚠️ Çekilişe zaten katılmış durumdasın!", ephemeral: true });
         }
 
-        // ŞART KONTROL MERKEZİ
         if (cVeri.sartTuru === 'rol') {
-            const hasRole = i.member.roles.cache.has(cVeri.sartDetay);
-            if (!hasRole) {
-                return i.reply({ content: `❌ Bu çekilişe katılmak için gerekli olan <@&${cVeri.sartDetay}> rolüne sahip değilsiniz!`, ephemeral: true });
+            if (!i.member.roles.cache.has(cVeri.sartDetay)) {
+                return i.reply({ content: `❌ Bu çekiliş için gerekli olan <@&${cVeri.sartDetay}> rolüne sahip değilsiniz!`, ephemeral: true });
             }
         } 
         else if (cVeri.sartTuru === 'invite') {
             const gerekenInvite = parseInt(cVeri.sartDetay);
             const userInviteVeri = botVerisi.davetler[i.guild.id]?.[i.user.id]?.sayi || 0;
-            
             if (userInviteVeri < gerekenInvite) {
-                return i.reply({ content: `❌ Çekiliş şartını karşılamıyorsunuz! Gereken davet sayısı: **${gerekenInvite}**, Sizin davetiniz: **${userInviteVeri}**`, ephemeral: true });
+                return i.reply({ content: `❌ Gerekli davet sayısına sahip değilsiniz! Gereken: **${gerekenInvite}**, Sizin: **${userInviteVeri}**`, ephemeral: true });
             }
         }
 
         cVeri.katilanlar.push(i.user.id);
         veriKaydet();
-
-        return i.reply({ content: "🎉 Tebrikler, çekilişe başarıyla katıldınız! Bol şanslar dileriz! 🍀", ephemeral: true });
+        return i.reply({ content: "🎉 Çekilişe başarıyla katıldınız! Bol şanslar! 🍀", ephemeral: true });
     }
 
-    // --- TICKET SİSTEMİ INTERACTIONLARI ---
     const ayar = botVerisi.sunucuAyarlar[i.guild.id];
     if (!ayar) return;
 
     if (i.isStringSelectMenu() && i.customId === 'ticket_kategori') {
         botVerisi.ticketCount++; veriKaydet();
         const secilenKat = i.values[0];
-
         const channel = await i.guild.channels.create({
             name: `${secilenKat}-${i.user.username}`,
             type: ChannelType.GuildText,
@@ -691,31 +721,20 @@ client.on('interactionCreate', async (i) => {
             ]
         });
 
-        const welcomeEmbed = new EmbedBuilder()
-            .setColor("Green")
-            .setDescription(`Merhaba ${i.user}, En yakın zamanda yetkililerimiz senle ilgilenecektir, lütfen sorununu anlat.\n\n**Yetkililer:** ${ayar.yetkiliRoller.map(r => `<@&${r}>`).join(", ")}`);
-
-        const closeBtn = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('tk_kapat_menusu').setLabel('Ticketi Kapat').setStyle(ButtonStyle.Danger)
-        );
-
-        await channel.send({ content: `${i.user} | ${ayar.yetkiliRoller.map(r => `<@&${r}>`).join(" ")}`, embeds: [welcomeEmbed], components: [closeBtn] });
+        const welcomeEmbed = new EmbedBuilder().setColor("Green").setDescription(`Merhaba ${i.user}, sorununu anlatabilirsin.`);
+        const closeBtn = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('tk_kapat_menusu').setLabel('Ticketi Kapat').setStyle(ButtonStyle.Danger));
+        await channel.send({ content: `${i.user}`, embeds: [welcomeEmbed], components: [closeBtn] });
         return i.reply({ content: `✅ Biletiniz oluşturuldu: ${channel}`, ephemeral: true });
     }
 
     if (i.isButton() && i.customId === 'tk_kapat_menusu') {
         const reasonMenu = new ActionRowBuilder().addComponents(
-            new StringSelectMenuBuilder()
-                .setCustomId('tk_final_kapat')
-                .setPlaceholder('Biletin kapatılma sebebini seçiniz...')
-                .addOptions([
-                    { label: 'Sorun Çözüldü', value: 'Sorun Çözüldü ✅', emoji: '✅' },
-                    { label: 'Geçersiz / Gereksiz Talep', value: 'Geçersiz Talep ❌', emoji: '❌' },
-                    { label: 'Kullanıcı Odadan Ayrıldı/Yanıtsız', value: 'Kullanıcı Yanıtsızlığı ⏰', emoji: '⏰' },
-                    { label: 'Vardiya Sonu Kapatıldı', value: 'Vardiya Sonu Kapanışı 🔒', emoji: '🔒' }
-                ])
+            new StringSelectMenuBuilder().setCustomId('tk_final_kapat').setPlaceholder('Bilet kapatılma sebebi...').addOptions([
+                { label: 'Sorun Çözüldü', value: 'Sorun Çözüldü ✅' },
+                { label: 'Geçersiz Talep', value: 'Geçersiz Talep ❌' }
+            ])
         );
-        return i.reply({ content: "⚠️ Bu bilet kapatılacak. Lütfen transcript kaydı için bir sebep seçin:", components: [reasonMenu] });
+        return i.reply({ content: "⚠️ Lütfen bir sebep seçin:", components: [reasonMenu] });
     }
 
     if (i.isStringSelectMenu() && i.customId === 'tk_final_kapat') {
@@ -727,24 +746,16 @@ client.on('interactionCreate', async (i) => {
         const logString = messages.reverse().map(m => `[${m.createdAt.toLocaleString()}] ${m.author.tag}: ${m.content}`).join('\n');
         const attachment = new AttachmentBuilder(Buffer.from(logString), { name: `transcript-${i.channel.name}.txt` });
 
-        const logEmbed = new EmbedBuilder()
-            .setTitle("🔒 Bir Destek Bileti Kapatıldı")
-            .setColor("Red")
-            .addFields(
-                { name: "🎫 Bileti Açan Üye", value: acanKisiId ? `<@${acanKisiId}>` : "`Bilinmiyor`", inline: true },
-                { name: "👮 Kapatan Yetkili", value: `${i.user}`, inline: true },
-                { name: "📝 Kapatılma Nedeni", value: `**${secilenSebep}**` }
-            )
-            .setTimestamp();
+        const logEmbed = new EmbedBuilder().setTitle("🔒 Bilet Kapatıldı").setColor("Red").addFields(
+            { name: "🎫 Açan Üye", value: acanKisiId ? `<@${acanKisiId}>` : "`Bilinmiyor`" },
+            { name: "👮 Kapatan Yetkili", value: `${i.user}` },
+            { name: "📝 Neden", value: `**${secilenSebep}**` }
+        ).setTimestamp();
 
-        if (logKanal) {
-            await logKanal.send({ embeds: [logEmbed], files: [attachment] });
-        }
-
-        await i.reply("🔒 Kapatma sebebi onaylandı. Bilet kanalı 5 saniye içinde tamamen yok ediliyor...");
+        if (logKanal) await logKanal.send({ embeds: [logEmbed], files: [attachment] });
+        await i.reply("🔒 Bilet 5 saniye içinde kapatılıyor...");
         return setTimeout(() => i.channel.delete().catch(() => {}), 5000);
     }
 });
 
 client.login(process.env.TOKEN);
-
