@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, Partials, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ChannelType, PermissionFlagsBits, AttachmentBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ChannelType, PermissionFlagsBits, AttachmentBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, InteractionType } = require('discord.js');
 const fs = require('fs');
 const express = require('express');
 const { createCanvas, loadImage } = require('@napi-rs/canvas');
@@ -14,30 +14,112 @@ const client = new Client({
         GatewayIntentBits.GuildMessages, 
         GatewayIntentBits.MessageContent, 
         GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildModeration
+        GatewayIntentBits.GuildInvites // Davet takibi için bu şart!
     ],
     partials: [Partials.Channel, Partials.Message, Partials.User]
 });
 
 const prefix = "mem!";
-// Veritabanı yapısını yeni oyunlar ve loglar için genişlettik
-let botVerisi = { uyarilar: {}, ticketCount: 0, sunucuAyarlar: {}, sayi: {}, kelime: {}, tuttu: {}, yetkiliRoller: [], afk: {}, linkEngel: {} };
+// Veritabanı şemalarımız
+let botVerisi = { 
+    uyarilar: {}, 
+    ticketCount: 0, 
+    sunucuAyarlar: {}, 
+    sayi: {}, 
+    kelime: {}, 
+    tuttu: {}, 
+    yetkiliRoller: [], 
+    afk: {}, 
+    linkEngel: {},
+    cekilisler: {},
+    davetler: {} // Davet verilerini tutmak için
+};
 
 if (fs.existsSync('./database.json')) {
     try { botVerisi = JSON.parse(fs.readFileSync('./database.json', 'utf8')); } catch (e) { console.log("Veri dosyası yükleme hatası."); }
 }
 function veriKaydet() { fs.writeFileSync('./database.json', JSON.stringify(botVerisi, null, 2)); }
 
-client.on('ready', () => { console.log(`${client.user.tag} | TÜM SİSTEMLER VE YENİ OYUN MOTORLARI AKTİF!`); });
+// --- DAVET TAKİP MOTORU ---
+const sunucuDavetleri = new Map();
 
-// --- MERKEZİ LOG GÖNDERME FONKSİYONU ---
-async function logGonder(guild, embed) {
-    const ayar = botVerisi.sunucuAyarlar[guild.id];
-    if (ayar && ayar.logSistemKanal) {
-        const logKanal = guild.channels.cache.get(ayar.logSistemKanal);
-        if (logKanal) logKanal.send({ embeds: [embed] }).catch(() => {});
+client.on('ready', async () => {
+    console.log(`${client.user.tag} | TÜM SİSTEMLER YENİ KOMUTLARLA AKTİF!`);
+    
+    // Bot açıldığında sunuculardaki mevcut davet linklerini hafızaya al
+    for (const [guildId, guild] of client.guilds.cache) {
+        try {
+            const invites = await guild.invites.fetch();
+            sunucuDavetleri.set(guild.id, new Map(invites.map(inv => [inv.code, inv.uses])));
+        } catch (e) { console.log(`${guild.name} sunucusunda davet yetkim yok.`); }
     }
-}
+});
+
+// Yeni bir davet oluşturulduğunda hafızayı güncelle
+client.on('inviteCreate', invite => {
+    const amap = sunucuDavetleri.get(invite.guild.id) || new Map();
+    amap.set(invite.code, invite.uses);
+    sunucuDavetleri.set(invite.guild.id, amap);
+});
+
+// Sunucuya biri girdiğinde kimin davetiyle geldiğini bul
+client.on('guildMemberAdd', async (member) => {
+    try {
+        const eskiDavetler = sunucuDavetleri.get(member.guild.id);
+        const yeniDavetler = await member.guild.invites.fetch();
+        sunucuDavetleri.set(member.guild.id, new Map(yeniDavetler.map(inv => [inv.code, inv.uses])));
+
+        let davetEden = null;
+        for (const [code, invite] of yeniDavetler) {
+            const eskiKullanim = eskiDavetler?.get(code) || 0;
+            if (invite.uses > eskiKullanim) {
+                davetEden = invite.inviter;
+                break;
+            }
+        }
+
+        if (davetEden) {
+            if (!botVerisi.davetler[member.guild.id]) botVerisi.davetler[member.guild.id] = {};
+            if (!botVerisi.davetler[member.guild.id][davetEden.id]) {
+                botVerisi.davetler[member.guild.id][davetEden.id] = { sayi: 0, girenler: [], cikanlar: [], tekrarGirenler: [] };
+            }
+
+            let dVeri = botVerisi.davetler[member.guild.id][davetEden.id];
+            
+            if (dVeri.cikanlar.includes(member.user.tag)) {
+                if (!dVeri.tekrarGirenler.includes(member.user.tag)) {
+                    dVeri.tekrarGirenler.push(member.user.tag);
+                }
+            } else {
+                if (!dVeri.girenler.includes(member.user.tag)) {
+                    dVeri.girenler.push(member.user.tag);
+                }
+            }
+            dVeri.sayi++;
+            veriKaydet();
+        }
+    } catch (e) { console.log(e); }
+});
+
+// Sunucudan biri çıktığında listeyi güncelle
+client.on('guildMemberRemove', async (member) => {
+    try {
+        const gId = member.guild.id;
+        if (!botVerisi.davetler[gId]) return;
+
+        for (const davetciId in botVerisi.davetler[gId]) {
+            let dVeri = botVerisi.davetler[gId][davetciId];
+            if (dVeri.girenler.includes(member.user.tag)) {
+                dVeri.girenler = dVeri.girenler.filter(u => u !== member.user.tag);
+                if (!dVeri.cikanlar.includes(member.user.tag)) dVeri.cikanlar.push(member.user.tag);
+                dVeri.sayi = Math.max(0, dVeri.sayi - 1);
+                veriKaydet();
+                break;
+            }
+        }
+    } catch (e) { console.log(e); }
+});
+
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
@@ -57,79 +139,21 @@ client.on('messageCreate', async (message) => {
     }
 
     // --- KORUMALI OYUN MOTORLARI ---
-    
-    // 1. Sayı Saymaca Motoru (Gelişmiş & Filtreli)
     if (botVerisi.sayi[message.channel.id]) {
         const d = botVerisi.sayi[message.channel.id];
         const n = parseInt(message.content);
-        
         if (isNaN(n)) {
             await message.delete().catch(() => {});
-            return message.channel.send(`⚠️ ${message.author}, bu kanalda sadece sayı paylaşabilirsin!`).then(m => setTimeout(() => m.delete(), 3000));
+            return message.channel.send(`⚠️ ${message.author}, sadece sayı yaz!`).then(m => setTimeout(() => m.delete(), 2000));
         }
-        
         if (n === d.sonSayi + 1 && message.author.id !== d.sonKullanici) {
             botVerisi.sayi[message.channel.id] = { sonSayi: n, sonKullanici: message.author.id };
-            veriKaydet();
             return message.react('✅');
         } else {
-            await message.delete().catch(() => {});
-            if (message.author.id === d.sonKullanici) {
-                return message.channel.send(`⚠️ ${message.author}, üst üste iki kez sayı yazamazsın!`).then(m => setTimeout(() => m.delete(), 3000));
-            } else {
-                return message.channel.send(`❌ ${message.author} sırayı bozdu! Sayı **${d.sonSayi + 1}** olmalıydı. Oyun sıfırlandı!`).then(m => setTimeout(() => m.delete(), 4000));
-            }
+            message.reply(`❌ Sıra bozuldu! Sayı: **${d.sonSayi + 1}** olmalıydı. Oyun sıfırlandı! Başlangıç: 1`);
+            botVerisi.sayi[message.channel.id] = { sonSayi: 0, sonKullanici: null };
+            return veriKaydet();
         }
-    }
-
-    // 2. Kelime Oyunu Motoru
-    if (botVerisi.kelime && botVerisi.kelime[message.channel.id]) {
-        const kData = botVerisi.kelime[message.channel.id];
-        const girdi = message.content.trim().toLowerCase();
-        
-        if (girdi.split(/\s+/).length > 1) {
-            await message.delete().catch(() => {});
-            return message.channel.send(`⚠️ ${message.author}, sadece tek bir kelime yazmalısın!`).then(m => setTimeout(() => m.delete(), 3000));
-        }
-
-        if (message.author.id === kData.sonKullanici) {
-            await message.delete().catch(() => {});
-            return message.channel.send(`⚠️ ${message.author}, üst üste kelime yazamazsın! Sıranı bekle.`).then(m => setTimeout(() => m.delete(), 3000));
-        }
-
-        if (kData.sonKelime) {
-            const sonHarf = kData.sonKelime.slice(-1);
-            const baslangicHarf = girdi.charAt(0);
-            if (sonHarf !== baslangicHarf) {
-                await message.delete().catch(() => {});
-                return message.channel.send(`⚠️ ${message.author}, kelime **"${sonHarf.toUpperCase()}"** harfi ile başlamalı! (Son kelime: *${kData.sonKelime}*)`).then(m => setTimeout(() => m.delete(), 3000));
-            }
-        }
-
-        botVerisi.kelime[message.channel.id] = { sonKelime: girdi, sonKullanici: message.author.id };
-        veriKaydet();
-        return message.react('✅');
-    }
-
-    // 3. Tutti Tutmadı Motoru
-    if (botVerisi.tuttu && botVerisi.tuttu[message.channel.id]) {
-        const tData = botVerisi.tuttu[message.channel.id];
-        const temizMesaj = message.content.trim();
-        const kucukMesaj = temizMesaj.toLowerCase();
-
-        if (!kucukMesaj.startsWith('tuttu') && !kucukMesaj.startsWith('tutmadı')) {
-            await message.delete().catch(() => {});
-            return message.channel.send(`⚠️ ${message.author}, cümlenin başına her zaman **Tuttu** veya **Tutmadı** yazmalısın!`).then(m => setTimeout(() => m.delete(), 3000));
-        }
-
-        if (message.author.id === tData.sonKullanici) {
-            await message.delete().catch(() => {});
-            return message.channel.send(`⚠️ ${message.author}, üst üste oynayamazsın! Başkasının yazmasını bekle.`).then(m => setTimeout(() => m.delete(), 3000));
-        }
-
-        botVerisi.tuttu[message.channel.id] = { sonKullanici: message.author.id };
-        veriKaydet();
-        return message.react('🎲');
     }
 
     // --- AFK SİSTEMİ ---
@@ -164,7 +188,7 @@ client.on('messageCreate', async (message) => {
             const pLog = q3.first().mentions.channels.first();
             if (!pLog) return message.reply("❌ Log kanalı etiketlemedin, iptal edildi.");
 
-            botVerisi.sunucuAyarlar[message.guild.id] = { ...botVerisi.sunucuAyarlar[message.guild.id], panelKanal: pKanal.id, yetkiliRoller: pRoller, logKanal: pLog.id };
+            botVerisi.sunucuAyarlar[message.guild.id] = { panelKanal: pKanal.id, yetkiliRoller: pRoller, logKanal: pLog.id };
             veriKaydet();
 
             const panelEmbed = new EmbedBuilder()
@@ -195,83 +219,169 @@ client.on('messageCreate', async (message) => {
     const args = message.content.slice(prefix.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    // Yeni komutlar listeye eklendi
-    const tumKomutlar = ['komutlar', 'afk', 'owner', 'avatar', 'mute', 'unmute', 'ban', 'kick', 'sil', 'lock', 'unlock', 'uyarı', 'rolver', 'rolal', 'yetkilisec', 'sayısaymaca', 'ship', 'duyuru', 'kurallar', 'linkengel-on', 'linkengel-off', 'yavaşmod', 'hoşgeldin', 'hoşçakal', 'logs', 'kelimeoyunu', 'tuttututmadı'];
+    const tumKomutlar = ['komutlar', 'afk', 'owner', 'avatar', 'mute', 'unmute', 'ban', 'kick', 'sil', 'lock', 'unlock', 'uyarı', 'rolver', 'rolal', 'yetkilisec', 'sayısaymaca', 'ship', 'duyuru', 'kurallar', 'linkengel-on', 'linkengel-off', 'yavaşmod', 'çekiliş', 'invitesay'];
     if (!tumKomutlar.includes(command)) return message.reply(`❌ \`${prefix}${command}\` komutu bulunamadı.`);
 
-    // Genel yetkisiz komutlar listesi
+    // Genel Üye Komutları Yetki Filtresi
     const genelKomutlar = ['ship', 'komutlar', 'afk', 'avatar', 'owner'];
     if (!genelKomutlar.includes(command) && !canUse) {
-        return message.reply("❌ Bu komutu kullanmak için yetkiniz bulunmuyor.");
+        return message.reply("❌ Bu komutu kullanmak için yetkiniz (Yönetici veya Yetkili Rol) bulunmuyor.");
     }
 
-    // --- LOGS SİSTEMİ KURMA KOMUTU ---
-    if (command === 'logs') {
-        const hedefKanal = message.mentions.channels.first();
-        if (!hedefKanal) return message.reply(`❌ Yanlış Kullanım! Örnek: \`${prefix}logs #kanal\``);
+    // --- YENİ KOMUT: INVITESAY (YETKİLİLERE ÖZEL) ---
+    if (command === 'invitesay') {
+        const hedefKullanici = message.mentions.users.first() || message.author;
+        const gId = message.guild.id;
 
-        if (!botVerisi.sunucuAyarlar[message.guild.id]) botVerisi.sunucuAyarlar[message.guild.id] = {};
-        botVerisi.sunucuAyarlar[message.guild.id].logSistemKanal = hedefKanal.id;
-        veriKaydet();
+        if (!botVerisi.davetler[gId] || !botVerisi.davetler[gId][hedefKullanici.id]) {
+            return message.reply(`📊 **${hedefKullanici.username}** kullanıcısının bu sunucuda henüz kayıtlı bir davet verisi bulunmuyor.`);
+        }
 
-        return message.reply(`✅ Merkezi log sistemi başarıyla ${hedefKanal} kanalına kuruldu. Artık tüm Ban, Kick, Mute, Uyarı ve Silinen mesajlar buraya aktarılacak.`);
+        const dVeri = botVerisi.davetler[gId][hedefKullanici.id];
+        
+        const davetEmbed = new EmbedBuilder()
+            .setTitle(`📊 Davet İstatistikleri: ${hedefKullanici.username}`)
+            .setColor("Green")
+            .setThumbnail(hedefKullanici.displayAvatarURL({ dynamic: true }))
+            .addFields(
+                { name: "✨ Toplam Aktif Davet Sayısı", value: `**${dVeri.sayi}** kişi` },
+                { name: "📥 Sunucuya Getirdikleri", value: dVeri.girenler.length > 0 ? dVeri.girenler.map(u => `\`${u}\``).join(', ') : "_Kimse yok_" },
+                { name: "📤 Sunucudan Çıkanlar", value: dVeri.cikanlar.length > 0 ? dVeri.cikanlar.map(u => `\`${u}\``).join(', ') : "_Kimse yok_" },
+                { name: "🔄 Çıkıp Tekrar Girenler", value: dVeri.tekrarGirenler.length > 0 ? dVeri.tekrarGirenler.map(u => `\`${u}\``).join(', ') : "_Kimse yok_" }
+            )
+            .setTimestamp();
+
+        return message.reply({ embeds: [davetEmbed] });
     }
 
-    // --- KELİME OYUNU AYARLAMA KOMUTU ---
-    if (command === 'kelimeoyunu') {
-        const hedefKanal = message.mentions.channels.first();
-        if (!hedefKanal) return message.reply(`❌ Yanlış Kullanım! Örnek: \`${prefix}kelimeoyunu #kanal\``);
+    // --- YENİ KOMUT: ÇEKİLİŞ (YETKİLİLERE ÖZEL) ---
+    if (command === 'çekiliş') {
+        const filter = m => m.author.id === message.author.id;
 
-        if (!botVerisi.kelime) botVerisi.kelime = {};
-        botVerisi.kelime[hedefKanal.id] = { sonKelime: null, sonKullanici: null };
-        veriKaydet();
+        const zamanKontrol = (str) => {
+            if (str.startsWith('.') || str.length < 3) return false;
+            if (str.toLowerCase().startsWith('bugün') || str.toLowerCase().startsWith('yarın')) return true;
+            return false;
+        };
 
-        return message.reply(`✅ Kelime oyunu ${hedefKanal} kanalında başarıyla aktif edildi!`);
+        try {
+            await message.reply("1️⃣ **Çekiliş başlangıç zamanı nedir?** *(Cümle 'Bugün' veya 'Yarın' ile başlamalıdır! Örnek: Bugün 13:00)*");
+            const q1 = await message.channel.awaitMessages({ filter, max: 1, time: 30000 });
+            const baslangic = q1.first().content;
+            if (!zamanKontrol(baslangic)) return message.reply("❌ Hatalı giriş! Zaman cümlesi 'Bugün' veya 'Yarın' ile başlamalıdır. İşlem iptal edildi.");
+
+            await message.reply("2️⃣ **Çekiliş bitiş zamanı nedir?** *(Cümle 'Bugün' veya 'Yarın' ile başlamalıdır! Örnek: Yarın 18:00)*");
+            const q2 = await message.channel.awaitMessages({ filter, max: 1, time: 30000 });
+            const bitis = q2.first().content;
+            if (!zamanKontrol(bitis)) return message.reply("❌ Hatalı giriş! Zaman cümlesi 'Bugün' veya 'Yarın' ile başlamalıdır. İşlem iptal edildi.");
+
+            const sartEmbed = new EmbedBuilder()
+                .setTitle("🎯 Çekiliş Katılım Şartı")
+                .setDescription("Lütfen aşağıdaki butonları kullanarak çekilişin katılım şartını seçiniz:")
+                .setColor("Blue");
+
+            const sartButonlar = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId('sart_invite').setLabel('1. İnvite Şartı').setStyle(ButtonStyle.Primary),
+                new ButtonBuilder().setCustomId('sart_rol').setLabel('2. Rol Şartı').setStyle(ButtonStyle.Primary),
+                new ButtonBuilder().setCustomId('sart_yok').setLabel('3. Şart Yok').setStyle(ButtonStyle.Success)
+            );
+
+            const sartMesaj = await message.reply({ embeds: [sartEmbed], components: [sartButonlar] });
+
+            const butonEtkilesim = await sartMesaj.awaitMessageComponent({ 
+                filter: i => i.user.id === message.author.id, 
+                time: 30000 
+            });
+
+            let sartTuru = 'yok';
+            let sartDetay = 'Herkes Katılabilir';
+
+            if (butonEtkilesim.customId === 'sart_invite') {
+                sartTuru = 'invite';
+                const modal = new ModalBuilder().setCustomId('modal_invite').setTitle('İnvite Şartı Girişi');
+                const inviteInput = new TextInputBuilder()
+                    .setCustomId('invite_count')
+                    .setLabel('Kullanıcıların kaç invite yapması lazım?')
+                    .setStyle(TextInputStyle.Short)
+                    .setPlaceholder('Örn: 3')
+                    .setRequired(true);
+                modal.addComponents(new ActionRowBuilder().addComponents(inviteInput));
+                
+                await butonEtkilesim.showModal(modal);
+                const modalSubmit = await butonEtkilesim.awaitModalSubmit({ time: 30000 });
+                sartDetay = modalSubmit.fields.getTextInputValue('invite_count');
+                await modalSubmit.reply({ content: `✅ İnvite şartı **${sartDetay}** olarak kaydedildi. Lütfen sohbete geri dönün.`, ephemeral: true });
+            } 
+            else if (butonEtkilesim.customId === 'sart_rol') {
+                sartTuru = 'rol';
+                const modal = new ModalBuilder().setCustomId('modal_rol').setTitle('Rol Şartı Girişi');
+                const rolInput = new TextInputBuilder()
+                    .setCustomId('rol_id')
+                    .setLabel('Hangi role sahip olması lazım? (Rol ID girin)')
+                    .setStyle(TextInputStyle.Short)
+                    .setPlaceholder('Rolün ID numarasını yapıştırın')
+                    .setRequired(true);
+                modal.addComponents(new ActionRowBuilder().addComponents(rolInput));
+                
+                await butonEtkilesim.showModal(modal);
+                const modalSubmit = await butonEtkilesim.awaitModalSubmit({ time: 30000 });
+                sartDetay = modalSubmit.fields.getTextInputValue('rol_id');
+                await modalSubmit.reply({ content: `✅ Rol şartı kaydedildi. Lütfen sohbete geri dönün.`, ephemeral: true });
+            } 
+            else {
+                await butonEtkilesim.reply({ content: "✅ Şartsız olarak devam ediliyor.", ephemeral: true });
+            }
+
+            await message.channel.send("4️⃣ **Çekiliş ödülü nedir?**");
+            const q4 = await message.channel.awaitMessages({ filter, max: 1, time: 30000 });
+            const odul = q4.first().content;
+
+            await message.channel.send("5️⃣ **Çekilişi kaç kişi kazanabilir?** *(Sadece sayı yazın)*");
+            const q5 = await message.channel.awaitMessages({ filter, max: 1, time: 30000 });
+            const kazananSayisi = parseInt(q5.first().content);
+            if (isNaN(kazananSayisi) || kazananSayisi <= 0) return message.channel.send("❌ Hatalı sayı girdiniz, çekiliş iptal edildi.");
+
+            let sartGosterim = sartTuru === 'invite' ? `📩 ${sartDetay} Davet Şartı` : (sartTuru === 'rol' ? `🛡️ <@&${sartDetay}> Rol Şartı` : "✨ Şart Yok");
+
+            const cekilisEmbed = new EmbedBuilder()
+                .setTitle("🎉 DEV ÇEKİLİŞ BAŞLADI 🎉")
+                .setColor("Blue")
+                .setDescription(`Aşağıdaki mavi kutucuktaki 🎉 butonuna basarak çekilişe katılabilirsiniz!`)
+                .addFields(
+                    { name: "🎁 Çekiliş Ödülü:", value: `**${odul}**` },
+                    { name: "🎯 Çekilişe Katılım Şartı:", value: `${sartGosterim}` },
+                    { name: "📅 Çekilişin Başlayacağı Tarih:", value: `${baslangic}`, inline: true },
+                    { name: "⏰ Çekilişin Biteceği Tarih:", value: `${bitis}`, inline: true },
+                    { name: "👥 Çekilişi Kaç Kişi Kazanacak:", value: `**${kazananSayisi} Üye**` },
+                    { name: "👑 Çekilişi Başlatan:", value: `${message.author}` }
+                )
+                .setFooter({ text: "Bol şanslar!" })
+                .setTimestamp();
+
+            const katilButon = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId('cekilis_katil').setEmoji('🎉').setStyle(ButtonStyle.Primary)
+            );
+
+            const msg = await message.channel.send({ embeds: [cekilisEmbed], components: [katilButon] });
+
+            if (!botVerisi.cekilisler) botVerisi.cekilisler = {};
+            botVerisi.cekilisler[msg.id] = {
+                mesajId: msg.id,
+                kanalId: message.channel.id,
+                odul,
+                kazananSayisi,
+                sartTuru,
+                sartDetay,
+                baslatan: message.author.id,
+                katilanlar: []
+            };
+            veriKaydet();
+
+            return message.channel.send("✅ Çekiliş başarıyla oluşturuldu ve yayına alındı!");
+
+        } catch (e) { console.log(e); return message.reply("❌ Zaman aşımı veya kurulum esnasında bir hata oluştu."); }
     }
 
-    // --- TUTTU TUTMADI AYARLAMA KOMUTU ---
-    if (command === 'tuttututmadı') {
-        const hedefKanal = message.mentions.channels.first();
-        if (!hedefKanal) return message.reply(`❌ Yanlış Kullanım! Örnek: \`${prefix}tuttututmadı #kanal\``);
-
-        if (!botVerisi.tuttu) botVerisi.tuttu = {};
-        botVerisi.tuttu[hedefKanal.id] = { sonKullanici: null };
-        veriKaydet();
-
-        return message.reply(`✅ Tuttu Tutmadı sistemi ${hedefKanal} kanalında başarıyla başlatıldı!`);
-    }
-
-    // --- SAYI SAYMACA AYARLAMA KOMUTU (GÜNCELLENDİ) ---
-    if (command === 'sayısaymaca') {
-        const kanal = message.mentions.channels.first() || message.channel;
-        botVerisi.sayi[kanal.id] = { sonSayi: 0, sonKullanici: null };
-        veriKaydet();
-        return message.reply(`✅ Sayı saymaca korumalı oyun kanalı ${kanal} olarak ayarlandı ve sıfırdan başlatıldı.`);
-    }
-
-    // --- HOŞGELDİN KANAL AYARLAMA KOMUTU ---
-    if (command === 'hoşgeldin') {
-        const hedefKanal = message.mentions.channels.first();
-        if (!hedefKanal) return message.reply(`❌ Yanlış Kullanım! Örnek: \`${prefix}hoşgeldin #kanal\``);
-
-        if (!botVerisi.sunucuAyarlar[message.guild.id]) botVerisi.sunucuAyarlar[message.guild.id] = {};
-        botVerisi.sunucuAyarlar[message.guild.id].hgKanal = hedefKanal.id;
-        veriKaydet();
-
-        return message.reply(`✅ Hoş geldin mesajlarının gönderileceği kanal ${hedefKanal} olarak ayarlandı.`);
-    }
-
-    // --- HOŞÇAKAL KANAL AYARLAMA KOMUTU ---
-    if (command === 'hoşçakal') {
-        const hedefKanal = message.mentions.channels.first();
-        if (!hedefKanal) return message.reply(`❌ Yanlış Kullanım! Örnek: \`${prefix}hoşçakal #kanal\``);
-
-        if (!botVerisi.sunucuAyarlar[message.guild.id]) botVerisi.sunucuAyarlar[message.guild.id] = {};
-        botVerisi.sunucuAyarlar[message.guild.id].hkKanal = hedefKanal.id;
-        veriKaydet();
-
-        return message.reply(`✅ Hoşçakal mesajlarının gönderileceği kanal ${hedefKanal} olarak ayarlandı.`);
-    }
 
     // --- DUYURU KOMUTU ---
     if (command === 'duyuru') {
@@ -297,7 +407,7 @@ client.on('messageCreate', async (message) => {
             .setDescription("Sunucumuzun düzenini korumak amacıyla lütfen aşağıda belirtilen kurallara hassasiyet gösteriniz:")
             .setColor("Red")
             .addFields(
-                { name: "⚖️ 1. Saygı ve Hoşgörü", value: "Sunucu içerisindeki tüm üyelere ve yetkililere saygılı olmak zorunludur. Küfür, hakaret ve argo kesinlikle yasaktır." },
+                { name: "⚖️ 1. Saygı ve Hoşgörü", value: "Sunucu içerisindeki tüm üyelere ve yetkililere saygılı olmak zorunludur. Küfür, hakaret og argo kesinlikle yasaktır." },
                 { name: "🚫 2. Reklam ve Spam", value: "Kanallarda veya üyelerin DM kutularında reklam yapmak, spam veya flood yapmak yasaktır." },
                 { name: "👤 3. Profil ve İsim Düzeni", value: "Siyasi, dini, uygunsuz veya saldırgan profil resimleri, durum mesajları ve kullanıcı adları kullanılamaz." },
                 { name: "⚖️ 4. Kişisel Haklar", value: "Din, dil, ırk, mezhep veya cinsiyet ayrımcılığı yapmak, kişilerin özel hayatını (ifşa vb.) paylaşmak kesinlikle kalıcı yasaklanma sebebidir." },
@@ -401,19 +511,18 @@ client.on('messageCreate', async (message) => {
         } catch (e) { return message.reply("❌ Kanal kilidi açılırken bir hata oluştu."); }
     }
 
-    // --- YARDIM MENÜSÜ ---
+    // --- GÜNCELLENEN YARDIM MENÜSÜ (YENİ KOMUTLAR EKLENDİ) ---
     if (command === 'komutlar') {
         const helpEmbed = new EmbedBuilder().setTitle('🛡️ MEM Bot Komut Paneli').setColor('Blue').addFields(
             { name: '👤 Genel', value: '`afk`, `owner`, `avatar`, `komutlar`, `ship`' },
-            { name: '🛡️ Moderasyon', value: '`ban`, `kick`, `mute`, `unmute`, `uyarı`, `sil`, `lock`, `unlock`, `yetkilisec`, `duyuru`, `kurallar`, `linkengel-on`, `linkengel-off`, `yavaşmod`' },
-            { name: '⚙️ Kurulum & Ayarlar', value: '`hoşgeldin`, `hoşçakal`, `logs`' },
-            { name: '🎮 Oyun Motorları', value: '`sayısaymaca`, `kelimeoyunu`, `tuttututmadı`' },
+            { name: '🛡️ Moderasyon / Yönetim', value: '`ban`, `kick`, `mute`, `unmute`, `uyarı`, `sil`, `lock`, `unlock`, `yetkilisec`, `duyuru`, `kurallar`, `linkengel-on`, `linkengel-off`, `yavaşmod`, `çekiliş`, `invitesay`' },
+            { name: '🎮 Oyun Ayar', value: '`sayısaymaca`' },
             { name: '🎫 Destek', value: '`/setup`' }
         );
         return message.reply({ embeds: [helpEmbed] });
     }
 
-    // --- ESKİ MODERASYON KOMUTLARI ---
+    // --- MODERASYON KOMUTLARI ---
     if (command === 'ban') {
         const user = message.mentions.users.first();
         const reason = args.slice(1).join(" ") || "Sebep belirtilmedi";
@@ -472,23 +581,9 @@ client.on('messageCreate', async (message) => {
         botVerisi.uyarilar[member.id].push({ sebep, yetkili: message.author.tag });
         const count = botVerisi.uyarilar[member.id].length;
         veriKaydet();
-        
         const emb = new EmbedBuilder().setTitle("⚠️ Uyarı Kaydı").setColor("Orange").addFields(
             { name: "Kişi", value: member.user.tag, inline: true }, { name: "Sıra", value: `${count}. Uyarı`, inline: true }, { name: "Sebep", value: sebep }
         );
-        
-        // LOG TETİKLEYİCİSİ
-        const logEmb = new EmbedBuilder()
-            .setTitle("⚠️ Yeni Uyarı Verildi")
-            .setColor("Orange")
-            .addFields(
-                { name: "👤 Uyarılan Üye", value: `${member} (${member.user.tag})`, inline: true },
-                { name: "👮 Yetkili", value: `${message.author}`, inline: true },
-                { name: "📝 Sebep", value: sebep },
-                { name: "📊 Toplam Uyarı Sayısı", value: `${count}` }
-            ).setTimestamp();
-        await logGonder(message.guild, logEmb);
-
         await member.send({ embeds: [emb] }).catch(() => {});
         return message.reply({ embeds: [emb] });
     }
@@ -519,6 +614,13 @@ client.on('messageCreate', async (message) => {
         return message.reply(`✅ **${role.name}** rolü bot yetkilisi olarak sisteme eklendi.`);
     }
 
+    if (command === 'sayısaymaca') {
+        const kanal = message.mentions.channels.first() || message.channel;
+        botVerisi.sayi[kanal.id] = { sonSayi: 0, sonKullanici: null };
+        veriKaydet();
+        return message.reply(`✅ Sayı saymaca oyun kanalı ${kanal} olarak ayarlandı ve 1'den başlatıldı.`);
+    }
+
     if (command === 'afk') {
         const sebep = args.join(" ") || "Belirtilmedi";
         botVerisi.afk[message.author.id] = sebep; veriKaydet();
@@ -535,83 +637,42 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// --- ENTEGRE LOG TETİKLEYİCİLERİ (AUDIT LOGS) ---
-
-// 1. Silinen Mesaj Logu
-client.on('messageDelete', async (message) => {
-    if (message.partial || message.author?.bot || !message.guild) return;
-    const embed = new EmbedBuilder()
-        .setTitle("🗑️ Bir Mesaj Silindi")
-        .setColor("Red")
-        .addFields(
-            { name: "👤 Mesaj Sahibi", value: `${message.author} (${message.author.tag})`, inline: true },
-            { name: "📍 Kanal", value: `${message.channel}`, inline: true },
-            { name: "📝 Silinen İçerik", value: message.content ? `\`\`\`${message.content}\`\`\`` : "*İçerik tespit edilemedi (Fotoğraf veya Embed olabilir)*" }
-        ).setTimestamp();
-    await logGonder(message.guild, embed);
-});
-
-// 2. Sağ Tık Ban Logu
-client.on('guildBanAdd', async (ban) => {
-    const embed = new EmbedBuilder()
-        .setTitle("🚫 Bir Üye Yasaklandı (Ban)")
-        .setColor("DarkRed")
-        .addFields(
-            { name: "👤 Yasaklanan Üye", value: `${ban.user.tag} (${ban.user.id})` },
-            { name: "📝 Sebep", value: ban.reason || "Doğrudan belirtilmedi" }
-        ).setTimestamp();
-    await logGonder(ban.guild, embed);
-});
-
-// 3. Sağ Tık Kick / Mute (Timeout) ve Ayrılma Logu
-client.on('guildMemberRemove', async (member) => {
-    // Eski hoş geldin tetikleyicisi aynen korunuyor
-    const ayar = botVerisi.sunucuAyarlar[member.guild.id];
-    if (ayar && ayar.hkKanal) {
-        const hkKanal = member.guild.channels.cache.get(ayar.hkKanal);
-        if (hkKanal) await hkKanal.send({ content: `<@${member.id}> Tekrardan görüşmek üzere, yine bekleriz!` }).catch(() => {});
-    }
-
-    // Kick Audit kontrolü ve merkezi loga düşmesi
-    try {
-        const fetchedLogs = await member.guild.fetchAuditLogs({ limit: 1, type: 22 }); // MEMBER_KICK
-        const kickLog = fetchedLogs.entries.first();
-        if (kickLog && kickLog.target.id === member.id && (Date.now() - kickLog.createdTimestamp < 5000)) {
-            const embed = new EmbedBuilder()
-                .setTitle("🚪 Bir Üye Sunucudan Atıldı (Kick)")
-                .setColor("Orange")
-                .addFields(
-                    { name: "👤 Atılan Üye", value: `${member.user.tag} (${member.id})`, inline: true },
-                    { name: "👮 Yetkili", value: `${kickLog.executor}`, inline: true },
-                    { name: "📝 Sebep", value: kickLog.reason || "Sebep belirtilmedi" }
-                ).setTimestamp();
-            await logGonder(member.guild, embed);
-        }
-    } catch(e) {}
-});
-
-// Timeout Log Yakalayıcı
-client.on('guildMemberUpdate', async (oldMember, newMember) => {
-    if (!oldMember.communicationDisabledUntilTimestamp && newMember.communicationDisabledUntilTimestamp) {
-        try {
-            const fetchedLogs = await newMember.guild.fetchAuditLogs({ limit: 1, type: 24 }); // MEMBER_UPDATE
-            const muteLog = fetchedLogs.entries.first();
-            const embed = new EmbedBuilder()
-                .setTitle("🔇 Bir Üye Susturuldu (Mute)")
-                .setColor("DarkOrange")
-                .addFields(
-                    { name: "👤 Susturulan Üye", value: `${newMember.user.tag}`, inline: true },
-                    { name: "👮 Yetkili", value: muteLog ? `${muteLog.executor}` : "Bilinmiyor", inline: true },
-                    { name: "⏱️ Bitiş Süresi", value: `<t:${Math.floor(newMember.communicationDisabledUntilTimestamp / 1000)}:R>` }
-                ).setTimestamp();
-            await logGonder(newMember.guild, embed);
-        } catch(e) {}
-    }
-});
-
-// --- INTERACTION ETKİLEŞİMLERİ (TICKET PANEL İŞLEMLERİ - ESKİ ALTYAPI KORUNDU) ---
+// --- INTERACTION ETKİLEŞİMLERİ (TICKET VE ÇEKİLİŞ BUTONLARI) ---
 client.on('interactionCreate', async (i) => {
     if (!i.guild) return;
+
+    // --- ÇEKİLİŞE KATILMA BUTON MOTORU ---
+    if (i.isButton() && i.customId === 'cekilis_katil') {
+        const cVeri = botVerisi.cekilisler?.[i.message.id];
+        if (!cVeri) return i.reply({ content: "❌ Bu çekiliş veritabanında bulunamadı veya süresi doldu.", ephemeral: true });
+
+        if (cVeri.katilanlar.includes(i.user.id)) {
+            return i.reply({ content: "⚠️ Çekilişe zaten katılmış durumdasın!", ephemeral: true });
+        }
+
+        // ŞART KONTROL MERKEZİ
+        if (cVeri.sartTuru === 'rol') {
+            const hasRole = i.member.roles.cache.has(cVeri.sartDetay);
+            if (!hasRole) {
+                return i.reply({ content: `❌ Bu çekilişe katılmak için gerekli olan <@&${cVeri.sartDetay}> rolüne sahip değilsiniz!`, ephemeral: true });
+            }
+        } 
+        else if (cVeri.sartTuru === 'invite') {
+            const gerekenInvite = parseInt(cVeri.sartDetay);
+            const userInviteVeri = botVerisi.davetler[i.guild.id]?.[i.user.id]?.sayi || 0;
+            
+            if (userInviteVeri < gerekenInvite) {
+                return i.reply({ content: `❌ Çekiliş şartını karşılamıyorsunuz! Gereken davet sayısı: **${gerekenInvite}**, Sizin davetiniz: **${userInviteVeri}**`, ephemeral: true });
+            }
+        }
+
+        cVeri.katilanlar.push(i.user.id);
+        veriKaydet();
+
+        return i.reply({ content: "🎉 Tebrikler, çekilişe başarıyla katıldınız! Bol şanslar dileriz! 🍀", ephemeral: true });
+    }
+
+    // --- TICKET SİSTEMİ INTERACTIONLARI ---
     const ayar = botVerisi.sunucuAyarlar[i.guild.id];
     if (!ayar) return;
 
@@ -685,15 +746,5 @@ client.on('interactionCreate', async (i) => {
     }
 });
 
-// --- ÜYE GİRİŞ TETİKLEYİCİSİ ---
-client.on('guildMemberAdd', async (member) => {
-    const ayar = botVerisi.sunucuAyarlar[member.guild.id];
-    if (!ayar || !ayar.hgKanal) return;
-
-    const hgKanal = member.guild.channels.cache.get(ayar.hgKanal);
-    if (!hgKanal) return;
-
-    await hgKanal.send({ content: `<@${member.id}> Sunucumuza hoş geldin! Senin sayende **${member.guild.memberCount}** Kişi olduk.` }).catch(() => {});
-});
-
 client.login(process.env.TOKEN);
+
